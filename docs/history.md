@@ -18,9 +18,9 @@ Most of the first night's time went to environment problems rather than image pr
 
 The M31 run was repeated from a config written by `init`, with automatic dark selection among decoy darks and `crop = "2:3"`. Again every stage matched the original pixel for pixel and the final files were byte-identical. The catalogue fallback was tested against the real outage: VizieR was down, the plate solve failed, the fallback fetched the list from ESA, and the retry succeeded.
 
-## Phase 4: the Claude Code skill
+## Phase 4: the agent skill
 
-`skill/SKILL.md`; see [the Claude Code skill](claude-code.md).
+`skill/SKILL.md`, first written for Claude Code and later made agent-neutral, with an `AGENTS.md` for agents that read that instead; see [using darkroom with an AI agent](agents.md).
 
 ## Phase 5: a second target
 

@@ -20,7 +20,7 @@ bash setup.sh                # add --starnet-dir DIR to include StarNet in the c
 source .venv/bin/activate    # puts `darkroom` on the PATH
 ```
 
-`setup.sh` creates `.venv`, installs the package into it, builds a copy of the GraXpert denoise model that runs on the Apple GPU (see [why](troubleshooting.md#graxperts-gpu-denoise-fails-on-macos)), and links the Claude Code skill into `~/.claude/skills/darkroom` (pass `--no-skill` to skip that). It finishes by running `darkroom doctor`. You can run it again at any time; it only redoes what is missing.
+`setup.sh` creates `.venv`, installs the package into it, builds a copy of the GraXpert denoise model that runs on the Apple GPU (see [why](troubleshooting.md#graxperts-gpu-denoise-fails-on-macos)), and links the agent skill into `~/.claude/skills/darkroom`. Pass `--skill-dir DIR` to link it into another agent's skills folder instead, or `--no-skill` to skip it; see [using darkroom with an AI agent](agents.md). It finishes by running `darkroom doctor`. You can run it again at any time; it only redoes what is missing.
 
 ## Check the setup with `darkroom doctor`
 

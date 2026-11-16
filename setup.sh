@@ -1,24 +1,31 @@
 #!/bin/bash
 # Set up darkroom in this checkout: venv, dependencies, the cached denoise
-# model, the optional Claude Code skill link, then `darkroom doctor`.
+# model, the optional agent skill link(s), then `darkroom doctor`.
 # Safe to run again; it only creates what is missing.
 set -euo pipefail
 
 usage() {
     cat <<'USAGE'
-usage: ./setup.sh [--no-skill] [--starnet-dir DIR] [--offline]
+usage: ./setup.sh [--skill-dir DIR]... [--no-skill] [--starnet-dir DIR] [--offline]
 
-  --no-skill          do not link skill/ into ~/.claude/skills/darkroom
+  --skill-dir DIR     link skill/ as DIR/darkroom: the skills folder of your agent
+                      (repeatable; default: ~/.claude/skills)
+  --no-skill          do not link the skill anywhere
   --starnet-dir DIR   passed to `darkroom doctor` (else $DARKROOM_STARNET_DIR)
   --offline           passed to `darkroom doctor` (skip catalogue server checks)
 USAGE
 }
 
 skill=1
+skill_dirs=()
 doctor_args=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --no-skill) skill=0 ;;
+        --skill-dir)
+            [ $# -ge 2 ] || { echo "setup: --skill-dir needs a directory" >&2; exit 2; }
+            skill_dirs+=("$2"); shift ;;
+        --skill-dir=*) skill_dirs+=("${1#*=}") ;;
         --offline) doctor_args+=("--offline") ;;
         --starnet-dir)
             [ $# -ge 2 ] || { echo "setup: --starnet-dir needs a directory" >&2; exit 2; }
@@ -82,20 +89,25 @@ else:
             print(f"   could not build the fixed-batch model: {e}")
 PY
 
-# 4. Claude Code skill link
+# 4. agent skill link(s): skill/ is an Agent Skills folder (SKILL.md with name and
+#    description); any agent that loads skills from a folder can use it
 if [ "$skill" -eq 0 ]; then
     echo "== skill link skipped (--no-skill)"
 elif [ ! -f skill/SKILL.md ]; then
     echo "== no skill/SKILL.md in this checkout; nothing to link"
 else
-    dest="$HOME/.claude/skills/darkroom"
-    if [ -e "$dest" ] && [ ! -L "$dest" ]; then
-        echo "== $dest exists and is not a symlink; left untouched"
-    else
-        mkdir -p "$HOME/.claude/skills"
-        ln -sfn "$repo/skill" "$dest"
-        echo "== linked $dest -> $repo/skill"
-    fi
+    [ ${#skill_dirs[@]} -gt 0 ] || skill_dirs=("$HOME/.claude/skills")
+    for d in "${skill_dirs[@]}"; do
+        d="${d/#\~/$HOME}"
+        dest="$d/darkroom"
+        if [ -e "$dest" ] && [ ! -L "$dest" ]; then
+            echo "== $dest exists and is not a symlink; left untouched"
+        else
+            mkdir -p "$d"
+            ln -sfn "$repo/skill" "$dest"
+            echo "== linked $dest -> $repo/skill"
+        fi
+    done
 fi
 
 # 5. environment check

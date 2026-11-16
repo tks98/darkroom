@@ -18,13 +18,19 @@ file from a work directory and writes its own:
 | `starnet` | StarNet v2 star removal | `starless.tif` |
 | `finish` | Python: enhance, shrink stars, recombine, crop | `final.tif/.jpg` |
 
-The numbers are the tool's job. Your job is the part it cannot do: looking at
-the images and deciding whether each step actually improved them.
+The tool does the numbers. Your part is looking at the images and deciding
+whether each step improved them, which the tool cannot do.
+
+This skill works with any agent that can run shell commands. It also assumes
+you can look at images. If you cannot, report the measurements this skill asks
+for (frames kept, sky levels, clipped pixels, noise), make the preview JPGs
+anyway, and ask the user to look at them before you move on.
 
 ## Before you start
 
-1. Find the repo: this skill's folder is `<repo>/skill` (often reached through
-   a symlink in `~/.claude/skills/`, so resolve it). Use `<repo>/.venv/bin/darkroom`.
+1. Find the repo: this skill's folder is `<repo>/skill`, often reached through
+   a symlink in the agent's skills folder, so resolve the link. Use
+   `<repo>/.venv/bin/darkroom`.
    If there is no `.venv`, run `bash <repo>/setup.sh` first.
 2. Run `darkroom doctor --work WORK --subs SUBS`. Fix every FAIL before
    processing; a WARN is information, not a blocker. See "Known failures".
@@ -70,7 +76,7 @@ Run stage by stage the first time on a new target (`--to STAGE`), and check
 each result. Make a JPG preview, view it, and say what you see. Problems are
 cheap to fix at the stage that caused them and expensive to notice at the end.
 
-**After `stack`**
+### After `stack`
 - How many frames were registered and kept? (`logs/stack.log`.) Losing more
   than about 20% deserves a look at why: cloud, wind, trailing.
 - Quick-stretch the stack and view it at full frame and at 1:1 in the centre
@@ -98,34 +104,34 @@ cheap to fix at the stage that caused them and expensive to notice at the end.
   corners: it must be cropped, and its brightness scale differs from the
   others. To adopt a framing, set `[stack] framing` and restack.
 
-**After `bge`**
+### After `bge`
 - The background should be even. Measure the sky in a coarse grid away from
   the target; the blocks should agree within a few percent.
 - Look at `bge_background.fits`: it should be a smooth gradient. If it shows
   the shape of the target, the model has eaten real signal; raise
   `[bge] smoothing`.
 
-**After `color`**
+### After `color`
 - Read the SPCC lines in `logs/color.log`: how many stars were used, and
   whether Siril warned that the fit was imprecise. Report the warning; do not
   hide it.
 - The plate-solve result (pixel scale, field centre) should match the camera.
 
-**After `denoise`**
+### After `denoise`
 - Compare a 1:1 crop before and after. Noise should drop by roughly half at
   the default strength without the faint structure turning to plastic. Lower
   `[denoise] strength` if detail is being smoothed away.
 
-**After `stretch`**
+### After `stretch`
 - The sky should be dark grey, not black, and the brightest core should not
   be pure white. A flat, washed-out target means the arcsinh factor is too
   high; a blown core means the autostretch is too aggressive.
 
-**After `starnet`**
+### After `starnet`
 - View `starless.tif`. Look for blotches or holes where bright stars were, and
   for real detail (star clouds, small galaxies) that went with the stars.
 
-**After `finish`**
+### After `finish`
 Check, at 1:1, the core, each corner, any companion objects, and an outer
 part of the target:
 - Background neutral and even. Measure R, G and B as the median of all the
@@ -155,7 +161,7 @@ What the main `finish` settings do, and what going too far looks like:
 | Setting | Effect | Too far |
 |---|---|---|
 | `gamma` (star layer) | >1 shrinks stars by dimming halos more than cores | around 2.0 the field looks thinned out |
-| `erode` | morphological star shrink | any value deletes the faint 1–2 px stars; leave at 0 |
+| `erode` | morphological star shrink | any value deletes the faint 1 to 2 px stars; leave at 0 |
 | `mid` | <0.5 brightens the starless layer | core blows out, background lifts |
 | `sat` | overall saturation of the starless layer | noise turns into colour blotches |
 | `yb` | stretches yellow/blue differences inside the target only | core goes green-yellow, arms purple (seen at 2.6 on M31) |
@@ -169,9 +175,9 @@ colour. Say so when you describe the result.
 
 Two looks are shipped. Pass `--look` to `init`, or set `[target] look`.
 
-- **`galaxy`** (the default): StarNet removes the stars, the galaxy is
+- `galaxy` (the default): StarNet removes the stars, the galaxy is
   enhanced, the stars go back smaller. Made on M31.
-- **`cluster`**: for targets that are made of stars. StarNet would remove the
+- `cluster`: for targets that are made of stars. StarNet would remove the
   target itself and star reduction would dim it, so the look sets
   `[finish] stars = "keep"`: StarNet is not run, and `gamma`,
   `star_strength`, `yb`, `sharpen` and `erode` do nothing. It uses a stronger
@@ -191,24 +197,36 @@ and tell the user that each look was made from a single image.
 
 ## Known failures
 
-- **GraXpert's own GPU denoise fails on recent macOS.** darkroom does not use
-  it; `denoise` runs the same model through onnxruntime. If `doctor` says the
-  GPU check fell back to CPU, the stage still works, about 15× slower.
-- **Plate solve fails with a catalogue error.** Siril's catalogue server
-  (VizieR) is sometimes unreachable; `doctor` shows it as a WARN. `color`
-  then fetches Gaia DR3 from ESA's archive by itself and retries (about a
-  minute longer, mostly Siril's timeout) and says so in its output. If both
-  servers are down, wait: do not skip colour calibration.
-- **`siril-cli` starts in `~/Pictures`.** darkroom passes absolute paths. If
-  you write a Siril script by hand, do the same.
-- **StarNet is blocked by Gatekeeper.** The macOS StarNet CLI is an unsigned
-  binary. `doctor` reports the quarantine flag and the command that clears it
-  (`xattr -dr com.apple.quarantine <folder>`). That is a security decision:
-  explain it and let the user run the command. Do not run it yourself.
-  Until then, `darkroom star-reduce` is a weaker fallback that needs no
-  StarNet.
-- **Shell is often zsh.** Unquoted variables are not split into words; quote
-  paths (the Seestar's folders contain spaces) and pass arguments explicitly.
+### GraXpert's own GPU denoise fails on recent macOS
+
+darkroom does not use it; `denoise` runs the same model through onnxruntime.
+If `doctor` says the GPU check fell back to CPU, the stage still works, about
+15× slower.
+
+### Plate solve fails with a catalogue error
+
+Siril's catalogue server (VizieR) is sometimes unreachable; `doctor` shows it
+as a WARN. `color` then fetches Gaia DR3 from ESA's archive by itself and
+retries (about a minute longer, mostly Siril's timeout) and says so in its
+output. If both servers are down, wait: do not skip colour calibration.
+
+### `siril-cli` starts in `~/Pictures`
+
+darkroom passes absolute paths. If you write a Siril script by hand, do the
+same.
+
+### StarNet is blocked by Gatekeeper
+
+The macOS StarNet CLI is an unsigned binary. `doctor` reports the quarantine
+flag and the command that clears it (`xattr -dr com.apple.quarantine
+<folder>`). That is a security decision: explain it and let the user run the
+command. Do not run it yourself. Until then, `darkroom star-reduce` is a
+weaker fallback that needs no StarNet.
+
+### Shell is often zsh
+
+Unquoted variables are not split into words; quote paths (the Seestar's
+folders contain spaces) and pass arguments explicitly.
 
 ## Housekeeping
 

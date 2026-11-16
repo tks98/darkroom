@@ -55,7 +55,7 @@ darkroom run  --work m31
 - [Configuration](docs/configuration.md): every setting with its default, dark selection, framing, star reduction, cropping, and the galaxy and cluster looks.
 - [How it works](docs/pipeline.md): what each stage does, with numbers from M31.
 - [Troubleshooting](docs/troubleshooting.md): GraXpert on the GPU, the catalogue server, mismatched darks, StarNet and Gatekeeper.
-- [The Claude Code skill](docs/claude-code.md): letting Claude Code run the pipeline.
+- [Using darkroom with an AI agent](docs/agents.md): the agent skill, for Claude Code or any agent that loads skills, and `AGENTS.md`.
 - [History](docs/history.md): how darkroom was built and checked.
 
 ## Limitations
