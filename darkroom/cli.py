@@ -137,6 +137,10 @@ def _stack_args(o, run=False):
           help="percent of frames kept by weighted FWHM")
     o.add("--keep-round", type=float, default=90, key=("stack", "keep_round"), metavar="PCT",
           help="percent of frames kept by roundness")
+    o.add("--keep-bkg", type=float, default=100, key=("stack", "keep_bkg"), metavar="PCT",
+          help="percent of frames kept by background level, darkest first (drops cloud and haze)")
+    o.add("--keep-stars", type=float, default=100, key=("stack", "keep_stars"), metavar="PCT",
+          help="percent of frames kept by number of stars detected, most first")
     o.add("--clean", action="store_true", key=("stack", "clean"),
           help="delete <work>/process after a successful stack")
     g = o.parser.add_mutually_exclusive_group()
@@ -214,6 +218,11 @@ def _crop_arg(o):
                'largest such box centred on the target, or "none" (default: no crop)')
     o.add("--crop-center", type=_center, default=None, metavar="x,y", key=("finish", "crop_center"),
           help="centre for an aspect-ratio crop (default: brightest part of the blurred starless image)")
+    o.add("--crop-scale", type=float, default=1.0, metavar="FRACTION", key=("finish", "crop_scale"),
+          help="aspect-ratio crop: fraction of the largest box that fits (lower it for a small target)")
+    o.add("--stars", choices=("reduce", "keep"), default="reduce", key=("finish", "stars"),
+          help="reduce: remove stars with StarNet, enhance, add them back smaller; "
+               "keep: no star removal (for clusters; StarNet is not run)")
 
 
 def _finish_params(a) -> FinishParams:
@@ -224,7 +233,8 @@ def _finish_params(a) -> FinishParams:
                         erode=a.erode, neutral=a.neutral,
                         crop=None if isinstance(crop, Aspect) else crop,
                         crop_aspect=tuple(crop) if isinstance(crop, Aspect) else None,
-                        crop_center=parse_center(a.crop_center) if getattr(a, "crop_center", None) else None)
+                        crop_center=parse_center(a.crop_center) if getattr(a, "crop_center", None) else None,
+                        crop_scale=getattr(a, "crop_scale", 1.0), stars=getattr(a, "stars", "reduce"))
 
 
 INIT_HELP = """\
@@ -370,7 +380,8 @@ def _call(stage: str, work: Path, s: config.Settings, table: dict | None = None,
     """Run one stage with resolved settings (table: the stack table when stage is 'stack')."""
     if stage == "stack":
         stages.stack(work, table["subs"], table["dark"], table["framing"], table["keep_fwhm"],
-                     table["keep_round"], table["clean"], sub_glob=table["sub_glob"], **extra)
+                     table["keep_round"], table["clean"], sub_glob=table["sub_glob"],
+                     keep_bkg=table["keep_bkg"], keep_stars=table["keep_stars"], **extra)
     elif stage == "bge":
         stages.bge(work, s["bge"]["smoothing"])
     elif stage == "color":
@@ -563,7 +574,11 @@ def _run(a) -> None:
             print(f"-- stack: kept as it is; its dark cannot be checked ({str(e).splitlines()[0]})", flush=True)
             todo = todo[1:]
     times, ran_any, starnet_checked = {}, False, False
+    use_starnet = stages.starnet_needed(s["finish"])
     for stage in todo:
+        if stage == "starnet" and not use_starnet:
+            print('-- starnet: not needed ([finish] stars = "keep")', flush=True)
+            continue
         params = _params(stage, s, table)
         forced = force_all or ran_any
         if not forced:
@@ -572,7 +587,7 @@ def _run(a) -> None:
                 print(f"-- {stage}: up to date, skipped" + (f" ({why})" if why else ""), flush=True)
                 continue
             print(f"-- {stage}: has to run ({why})", flush=True)
-        if "starnet" in todo[todo.index(stage):] and not starnet_checked:
+        if use_starnet and "starnet" in todo[todo.index(stage):] and not starnet_checked:
             tools.starnet_dir(_starnet_dir(s))       # fail before hours of work, not after
             starnet_checked = True
         stages.forget_params(a.work, stage)

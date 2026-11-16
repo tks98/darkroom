@@ -8,7 +8,7 @@ setext fit
 set16bits
 
 cd "{{PROCESS}}"
-seqapplyreg pp_light -filter-wfwhm={{KEEP_FWHM=90}}% -filter-round={{KEEP_ROUND=90}}% -framing={{FRAMING=min}}
+seqapplyreg pp_light -filter-wfwhm={{KEEP_FWHM=90}}% -filter-round={{KEEP_ROUND=90}}% {{MORE_FILTERS=}}-framing={{FRAMING=min}}
 {{ifnot MAXIMIZE}}stack r_pp_light rej w 3 3 -norm=addscale -output_norm -weight=wfwhm -32b "-out={{STACK}}"
 {{if MAXIMIZE}}stack r_pp_light rej w 3 3 -norm=addscale -output_norm -weight=wfwhm -maximize -32b "-out={{STACK}}"
 

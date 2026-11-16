@@ -35,6 +35,8 @@ class FinishParams:
     crop: tuple[int, int, int, int] | None = None   # x, y, w, h
     crop_aspect: tuple[int, int] | None = None      # W:H; box chosen around the target (see aspect_box)
     crop_center: tuple[int, int] | None = None      # x, y; overrides the detected target centre
+    crop_scale: float = 1.0                         # aspect crop: fraction of the largest box (1 = largest)
+    stars: str = "reduce"                           # "reduce": starless + shrunk stars; "keep": no star removal
 
 
 def load(p):
@@ -77,8 +79,10 @@ def star_layer(stars, gamma, star_strength, erode=0):
 
 
 def neutralize(out, gm, log=print):
-    Lo = out.mean(-1)
-    skypx = (gm[..., 0] < 0.01) & (Lo < np.percentile(Lo, 50))
+    """Shift the channels so the sky is grey. The sky colour is the per-channel median of every
+    pixel outside the target mask. (Do not pre-select the darker pixels: that picks, per pixel,
+    the moments where the noisiest channel dipped, and reports a colour cast that is not there.)"""
+    skypx = gm[..., 0] < 0.01
     bg = np.median(out[skypx], axis=0)
     out = np.clip(out - (bg - bg.mean()), 0, 1)
     log(f"sky RGB before neutralization {bg.round(4)}")
@@ -144,22 +148,42 @@ def target_center(starless) -> tuple[int, int]:
     return int(x), int(y)
 
 
-def aspect_box(width: int, height: int, aspect: tuple[int, int], center: tuple[int, int]):
+def aspect_box(width: int, height: int, aspect: tuple[int, int], center: tuple[int, int], scale: float = 1.0):
     """Largest box of aspect W:H that fits in a width x height image, centred on ``center`` and
     clamped to the image. Integer maths: the limiting side is used in full, the other is
-    floor(side * ratio); the origin is centre - size // 2."""
+    floor(side * ratio); the origin is centre - size // 2. ``scale`` < 1 shrinks that box
+    (for a target that is small in the frame)."""
     aw, ah = aspect
     if width * ah <= height * aw:          # width is the limiting side
         w, h = width, width * ah // aw
     else:
         w, h = height * aw // ah, height
+    if scale != 1.0:
+        w, h = max(1, int(w * scale)), max(1, int(h * scale))
     cx, cy = center
     x0 = min(max(cx - w // 2, 0), width - w)
     y0 = min(max(cy - h // 2, 0), height - h)
     return x0, y0, w, h
 
 
+def keep_stars(orig, p: FinishParams):
+    """Finish without star removal, for targets that are made of stars (clusters): black point,
+    midtone and saturation on the whole image. The star and galaxy settings do not apply."""
+    g = np.clip((orig - p.black) / (1 - p.black), 0, 1)
+    g = mtf(p.mid, g)
+    g = saturate(g, p.sat)
+    L = g.mean(-1)
+    sky = np.median(L)
+    sky_sig = 1.4826 * np.median(np.abs(L[L < np.percentile(L, 60)] - sky))
+    return g, galaxy_mask(L, sky, max(sky_sig, 1e-3))
+
+
 def recombine(orig, sl, p: FinishParams, log=print):
+    if p.stars == "keep":
+        out, gm = keep_stars(orig, p)
+        if p.neutral:
+            out = neutralize(out, gm, log)
+        return _crop_out(out, orig, p, log, "stretched")
     stars = unscreen(orig, sl)
 
     g = np.clip((sl - p.black) / (1 - p.black), 0, 1)
@@ -191,14 +215,20 @@ def recombine(orig, sl, p: FinishParams, log=print):
     if p.neutral:
         out = neutralize(out, gm, log)
 
+    return _crop_out(out, sl, p, log, "starless")
+
+
+def _crop_out(out, ref, p: FinishParams, log, ref_name: str):
+    """Apply the crop setting; an aspect crop is centred on the brightest point of blurred ``ref``."""
     box = p.crop
     if box is None and p.crop_aspect:
-        H, W = sl.shape[:2]
-        center = p.crop_center or target_center(sl)
-        box = aspect_box(W, H, p.crop_aspect, center)
+        H, W = ref.shape[:2]
+        center = p.crop_center or target_center(ref)
+        box = aspect_box(W, H, p.crop_aspect, center, p.crop_scale)
         log(f"crop {p.crop_aspect[0]}:{p.crop_aspect[1]} around x={center[0]}, y={center[1]}"
-            f"{' (given)' if p.crop_center else ' (brightest point of the blurred starless image)'}"
-            f" -> {box[0]},{box[1]},{box[2]},{box[3]}")
+            f"{' (given)' if p.crop_center else f' (brightest point of the blurred {ref_name} image)'}"
+            + (f", scale {p.crop_scale:g}" if p.crop_scale != 1.0 else "")
+            + f" -> {box[0]},{box[1]},{box[2]},{box[3]}")
     if box:
         H, W = out.shape[:2]
         x, y, w, h = box
@@ -214,6 +244,7 @@ def save(out, base: Path, log=print):
     log(f"saved {base}.tif/.jpg {out.shape}")
 
 
-def run(original: Path, starless: Path, base: Path, p: FinishParams, log=print):
-    out = recombine(load(original), load(starless), p, log)
+def run(original: Path, starless: Path | None, base: Path, p: FinishParams, log=print):
+    """``starless`` is not read when p.stars == "keep"."""
+    out = recombine(load(original), None if p.stars == "keep" else load(starless), p, log)
     save(out, base, log)

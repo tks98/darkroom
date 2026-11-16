@@ -106,3 +106,16 @@ def test_save_round_trip(tmp_path):
     assert back.shape == img.shape
     np.testing.assert_allclose(back, img, atol=1 / 65535)
     assert (tmp_path / "x.jpg").is_file()
+
+
+def test_neutralize_is_not_fooled_by_unequal_channel_noise():
+    """A grey sky whose blue channel is noisier must stay grey (regression: measuring the sky
+    from the darker half of the pixels reported blue as low and added a blue cast)."""
+    rng = np.random.default_rng(0)
+    sky = np.full((200, 200, 3), 0.10, np.float32)
+    sky += rng.normal(0, [0.004, 0.004, 0.02], sky.shape).astype(np.float32)
+    gm = np.zeros((200, 200, 1), np.float32)          # no target: everything is sky
+    out = fin.neutralize(sky, gm, log=lambda *a: None)
+    med = np.median(out.reshape(-1, 3), axis=0)
+    assert np.ptp(med) < 0.001
+    assert abs(np.median(out) - 0.10) < 0.002         # and the level is unchanged

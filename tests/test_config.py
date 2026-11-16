@@ -37,7 +37,7 @@ def test_camera_preset_contents():
     assert meta["filters"] == {"IRCUT": "UV/IR Block", "LP": "ZWO Seestar LP"}
     assert meta["darks"] == config.DEFAULT_CAMERA_META["darks"]
     assert config.preset_names("cameras") == ["seestar-s30-pro"]
-    assert config.preset_names("looks") == ["galaxy"]
+    assert config.preset_names("looks") == ["cluster", "galaxy"]
 
 
 def test_precedence_flag_config_look_camera_builtin(tmp_path):

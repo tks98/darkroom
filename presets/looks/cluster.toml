@@ -1,0 +1,23 @@
+# Look preset: cluster. Settings found on M13 (a globular cluster, small in the
+# Seestar S30 Pro's field, 15 x 30 s). A cluster is made of stars, so nothing
+# is removed or shrunk: StarNet is not run, and the galaxy-only settings
+# (gamma, star_strength, yb, sharpen) do not apply. Same keys as darkroom.toml;
+# sits above the camera preset and below darkroom.toml in precedence.
+
+[color]
+whiteref = "Average Spiral Galaxy"   # SPCC white reference
+
+[stretch]
+asinh = 100                          # stronger than for a galaxy: keeps the core resolved and the
+                                     # star colours (25 washes the core out, 400 mottles the sky)
+shadows = -2.5                       # autostretch shadows clipping (sigma)
+target_bg = 0.10                     # autostretch target background
+sat = 0.35                           # Siril satu amount
+
+[finish]
+stars = "keep"                       # no star removal
+mid = 0.5                            # no midtone change
+sat = 1.3                            # brings out the yellow giants and blue stars
+                                     # (1.7 turns sky noise into coloured speckles)
+black = 0.04                         # darkens the sky
+neutral = true                       # neutralise the sky colour

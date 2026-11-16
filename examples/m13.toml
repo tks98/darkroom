@@ -1,0 +1,19 @@
+# M13 (globular cluster in Hercules), ZWO Seestar S30 Pro: 18 x 30 s, cut short
+# by cloud; 15 frames stacked. Copy to <work>/darkroom.toml, edit the paths:
+#
+#   darkroom run --work <work>
+#
+# The cluster look keeps the stars (StarNet is not run). Anything not set here
+# comes from the look preset, then the camera preset, then the built-ins.
+
+[target]
+name = "M 13"
+subs = "/path/to/M 13_sub"               # folder with the 30 s light subs (Light_*.fit)
+dark = "auto"                            # or "none", or the path of a master dark
+dark_library = "/path/to/darklibrary"
+camera = "seestar-s30-pro"
+look = "cluster"
+
+[finish]
+crop = "1:1"                             # square, centred on the cluster
+crop_scale = 0.45                        # the cluster is small in this field: 45% of the largest square

@@ -36,6 +36,8 @@ SCHEMA: dict[str, dict[str, tuple[str, object, str]]] = {
         "framing": ("str", "min", "min (area common to all frames) | cog (centre of gravity) | max (bounding box)"),
         "keep_fwhm": ("float", 90, "percent of frames kept by weighted FWHM"),
         "keep_round": ("float", 90, "percent of frames kept by roundness"),
+        "keep_bkg": ("float", 100, "percent of frames kept by background level, darkest first (100 = no filter; lower it to drop cloud)"),
+        "keep_stars": ("float", 100, "percent of frames kept by number of stars, most first (100 = no filter)"),
         "clean": ("bool", False, "delete <work>/process after a successful stack"),
     },
     "bge": {
@@ -76,6 +78,8 @@ SCHEMA: dict[str, dict[str, tuple[str, object, str]]] = {
         "neutral": ("bool", _F.neutral, "neutralise the sky colour"),
         "crop": ("str", "none", '"none", pixels "x,y,w,h", or an aspect ratio like "2:3" around the target'),
         "crop_center": ("str", None, 'centre "x,y" for an aspect-ratio crop (default: brightest part of the starless image)'),
+        "crop_scale": ("float", 1.0, "aspect-ratio crop: fraction of the largest box that fits (1 = largest; lower for a small target)"),
+        "stars": ("str", "reduce", '"reduce" (remove stars with StarNet, enhance, add them back smaller) | "keep" (no star removal: for clusters)'),
     },
 }
 
@@ -184,7 +188,7 @@ def _check(values: dict[str, dict[str, object]]) -> None:
     s = values["stack"]
     if s["framing"] not in FRAMINGS:
         raise ConfigError(f"[stack] framing should be one of {', '.join(FRAMINGS)}, got {s['framing']!r}")
-    for k in ("keep_fwhm", "keep_round"):
+    for k in ("keep_fwhm", "keep_round", "keep_bkg", "keep_stars"):
         if not 0 < s[k] <= 100:
             raise ConfigError(f"[stack] {k} is a percentage (0 < value <= 100), got {s[k]!r}")
     f = values["finish"]
@@ -194,6 +198,10 @@ def _check(values: dict[str, dict[str, object]]) -> None:
             parse_center(f["crop_center"])
     except ValueError as e:
         raise ConfigError(f"[finish] {e}") from None
+    if f["stars"] not in ("reduce", "keep"):
+        raise ConfigError(f'[finish] stars should be "reduce" or "keep", got {f["stars"]!r}')
+    if not 0 < f["crop_scale"] <= 1:
+        raise ConfigError(f"[finish] crop_scale is a fraction (0 < value <= 1), got {f['crop_scale']!r}")
     d = values["target"]["dark"]
     if d is not None and d.lower() in ("auto", "none"):
         values["target"]["dark"] = d.lower()
