@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "darkroom"
 version = "0.1.0"
-description = "Astrophotography editing toolkit: Siril, GraXpert and StarNet, run on your own data."
+description = "Astrophotography editing from the command line, built on Siril, GraXpert and StarNet. Use it directly or through an agent."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
