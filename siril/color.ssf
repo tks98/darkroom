@@ -1,0 +1,12 @@
+############################################
+# darkroom: plate solve + spectrophotometric color calibration
+# Input: GraXpert background-extracted stack (linear), bge.fits
+# Rendered by `darkroom color`.
+############################################
+requires 1.4.0
+setext fit
+cd "{{WORK}}"
+load bge.fits
+platesolve -focal={{FOCAL}} -pixelsize={{PIXEL}} -catalog={{CATALOG}}
+spcc "-oscsensor={{SENSOR}}" "-oscfilter={{FILTER}}" "-whiteref=Average Spiral Galaxy"
+save spcc

@@ -1,0 +1,29 @@
+############################################
+# darkroom: calibrate, register, stack (Siril 1.4)
+# OSC lights (GRBG), master dark only (no flats/bias)
+# Rendered by `darkroom stack`; the double-brace placeholders are replaced with
+# absolute, quoted paths (siril-cli starts in ~/Pictures).
+############################################
+requires 1.4.0
+setext fit
+set16bits
+
+# 1. Link the raw .fit lights (JPGs ignored) into a sequence
+cd "{{SUBS}}"
+link light "-out={{PROCESS}}"
+
+# 2. Dark-subtract, fix hot/cold pixels from the dark, debayer
+cd "{{PROCESS}}"
+calibrate light "-dark={{DARK}}" -cc=dark 3 3 -cfa -equalize_cfa -debayer
+
+# 3. Register: pick best reference, compute transforms (homography)
+register pp_light -2pass -maxstars=1000
+
+# 4. Apply transforms, keep best ~90% by weighted FWHM and roundness,
+#    crop to the area common to all frames
+seqapplyreg pp_light -filter-wfwhm=90% -filter-round=90% -framing=min
+
+# 5. Stack: winsorized sigma rejection, add+scale normalization, weight by wFWHM
+stack r_pp_light rej w 3 3 -norm=addscale -output_norm -weight=wfwhm -32b "-out={{STACK}}"
+
+close

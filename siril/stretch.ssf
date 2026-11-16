@@ -1,0 +1,21 @@
+############################################
+# darkroom: stretch + saturation + export
+# Input: denoised, color-calibrated linear stack (denoised.fits)
+# Output: stretched.fit, stretched.tif (16-bit, uncompressed, StarNet input),
+#         stretched.jpg (preview)
+# Rendered by `darkroom stretch`.
+############################################
+requires 1.4.0
+setext fit
+cd "{{WORK}}"
+load denoised.fits
+asinh -human {{ASINH}}
+autostretch -linked {{SHADOWS}} {{TARGET_BG}}
+satu {{SAT}} 1.5
+save stretched
+savejpg stretched 95
+# Reload the saved FITS before writing the TIFF: Siril then assigns sRGB to the
+# (profile-less) FITS, which is how the reference StarNet input was produced.
+# Saving the TIFF straight from memory differs by up to ~11/65535.
+load stretched
+savetif stretched

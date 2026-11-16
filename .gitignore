@@ -1,0 +1,39 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+
+# macOS
+.DS_Store
+
+# Image data and intermediates: never commit (FITS/TIFF headers can hold
+# observing-site coordinates and device IDs)
+*.fit
+*.fits
+*.fts
+*.tif
+*.tiff
+*.ser
+*.seq
+*.xisf
+
+# Model weights and logs
+*.onnx
+*.pb
+*.log
+
+# Work directories
+process/
+logs/
+work/
+work-*/
+runs/
+
+# README images are committed on purpose
+!docs/images/*.jpg
+!docs/images/*.png

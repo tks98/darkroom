@@ -1,0 +1,111 @@
+"""GraXpert AI denoise on the Apple GPU (CoreML) using a current onnxruntime.
+
+GraXpert 3.1.0rc2's bundled onnxruntime can't compile the denoise model for
+CoreML on macOS 27, so this reimplements GraXpert's denoise() (GPL-3,
+graxpert/denoising.py) with a fixed-batch copy of the same model (3.0.2).
+
+The fixed-batch copy is built once with
+``onnxruntime.tools.make_dynamic_shape_fixed --dim_param batch_size --dim_value 8``
+into $DARKROOM_CACHE and reused afterwards.
+"""
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import numpy as np
+
+from . import tools
+
+BATCH, WIN, STRIDE, THR = 8, 256, 128, 10.0        # THR = model_threshold for 2.x/3.x models
+
+
+def denoise(image, session, strength, log=print):
+    """image: H x W x 3 float32 in [0,1]. Mirrors GraXpert's tiling/normalization."""
+    original = image.copy()
+    median = np.median(image[::4, ::4, :], axis=(0, 1))
+    mad = np.median(np.abs(image[::4, ::4, :] - median), axis=(0, 1))
+
+    H, W, _ = image.shape
+    off = (WIN - STRIDE) // 2
+    ith, itw = H // STRIDE + 1, W // STRIDE + 1
+    dh, dw = ith * STRIDE - H, itw * STRIDE - W
+    image = np.concatenate((image, image[H - dh:]), axis=0)
+    image = np.concatenate((image, image[:, W - dw:]), axis=1)
+    h, w, _ = image.shape
+    image = np.concatenate((image[:off], image, image[h - off:]), axis=0)
+    image = np.concatenate((image[:, :off], image, image[:, w - off:]), axis=1)
+    output = image.copy()
+
+    n = ith * itw
+    t0 = time.time()
+    for b in range(0, n, BATCH):
+        idx = list(range(b, min(b + BATCH, n)))
+        tiles, raw = [], []
+        for k in idx:
+            i, j = k % ith, k // ith
+            t = (image[STRIDE * i:STRIDE * i + WIN, STRIDE * j:STRIDE * j + WIN] - median) / mad * 0.04
+            raw.append(t)
+            tiles.append(np.clip(t, -THR, THR))
+        batch = np.zeros((BATCH, WIN, WIN, 3), np.float32)
+        batch[:len(tiles)] = tiles
+        res = session.run(None, {"gen_input_image": batch})[0]
+        for m, k in enumerate(idx):
+            i, j = k % ith, k // ith
+            t = np.where(raw[m] < THR, res[m], raw[m]) / 0.04 * mad + median
+            output[STRIDE * i + off:STRIDE * (i + 1) + off, STRIDE * j + off:STRIDE * (j + 1) + off] = \
+                t[off:off + STRIDE, off:off + STRIDE]
+        if (b // BATCH) % 50 == 0:
+            log(f"  {min(b + BATCH, n)}/{n} tiles  {time.time() - t0:.1f}s")
+    output = output[off:H + off, off:W + off]
+
+    thr = THR / 0.04 * mad + median
+    blend = np.where(original < thr, output, original)
+    return np.clip(blend * strength + original * (1 - strength), 0, 1).astype(np.float32)
+
+
+def fixed_batch_model(log_path: Path, log=print) -> Path:
+    """Return the batch-8 copy of the GraXpert model, building it in the cache on first use."""
+    src = tools.require_file(tools.graxpert_model(), "GraXpert denoise model (set DARKROOM_GRAXPERT_MODEL)")
+    cache = tools.cache_dir()
+    dst = cache / f"graxpert_denoise_3.0.2_b{BATCH}.onnx"
+    if dst.is_file():
+        return dst
+    cache.mkdir(parents=True, exist_ok=True)
+    tmp = dst.with_suffix(".onnx.tmp")
+    log(f"building fixed-batch model {dst} from {src} (one-off)")
+    tools.run_tool([sys.executable, "-m", "onnxruntime.tools.make_dynamic_shape_fixed",
+                    "--dim_param", "batch_size", "--dim_value", str(BATCH), str(src), str(tmp)], log_path)
+    if not tmp.is_file():
+        raise tools.StageError(f"make_dynamic_shape_fixed produced no output; see {log_path}")
+    os.replace(tmp, dst)
+    return dst
+
+
+def run(src: Path, dst: Path, strength: float, cpu: bool, log_path: Path, log=print) -> None:
+    import onnxruntime as ort
+    from astropy.io import fits
+
+    model = fixed_batch_model(log_path, log)
+    with fits.open(src) as hdul:
+        hdr, data = hdul[0].header, hdul[0].data.astype(np.float32)
+    if not (data.ndim == 3 and data.shape[0] == 3):
+        raise tools.StageError(f"{src}: expected a 3-channel Siril/GraXpert FITS, got shape {data.shape}")
+    img = np.ascontiguousarray(np.moveaxis(data, 0, -1))
+
+    prov = ["CPUExecutionProvider"] if cpu else [
+        ("CoreMLExecutionProvider", {"ModelFormat": "MLProgram", "MLComputeUnits": "ALL"}),
+        "CPUExecutionProvider"]
+    t = time.time()
+    sess = ort.InferenceSession(str(model), providers=prov)
+    log(f"providers: {sess.get_providers()}  (load {time.time() - t:.1f}s)")
+
+    t = time.time()
+    out = denoise(img, sess, strength, log)
+    log(f"denoise done in {time.time() - t:.1f}s")
+    backend = "CPU" if cpu else "CoreML"
+    hdr["HISTORY"] = f"GraXpert denoise 3.0.2 strength {strength} via onnxruntime {ort.__version__} {backend}"
+    fits.PrimaryHDU(np.moveaxis(out, -1, 0), header=hdr).writeto(dst, overwrite=True)
