@@ -1,0 +1,36 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "darkroom"
+version = "0.1.0"
+description = "Calibrate, stack, denoise, star-reduce and finish astrophotos from the command line"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy",
+    "scipy",
+    "astropy",
+    "tifffile",
+    "pillow",
+    "onnx",
+    "onnxruntime==1.32.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+darkroom = "darkroom.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["darkroom"]
+
+# The Siril script templates live in siril/ at the repo root; ship them inside
+# the wheel as darkroom/siril so non-editable installs find them too.
+[tool.hatch.build.targets.wheel.force-include]
+"siril" = "darkroom/siril"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
