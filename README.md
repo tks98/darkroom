@@ -1,6 +1,6 @@
 # darkroom
 
-Turns raw deep-sky subs into a finished image with Siril, GraXpert and StarNet.
+Astrophotography editing from the command line, built on Siril, GraXpert and StarNet. Use it directly or through an agent.
 
 darkroom is a command-line pipeline written in Python. You point it at a folder of sub-frames from a night of imaging, and it calibrates and stacks them in [Siril](https://siril.org), removes the sky gradient and the noise with [GraXpert](https://graxpert.com)'s models, calibrates the colour against Gaia star data, separates the stars from the target with [StarNet](https://www.starnetastro.com), and does the final blend and finishing itself.
 
