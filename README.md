@@ -34,18 +34,6 @@ Some of the colour on the right is cosmetic (see `finish` below).
 
 ![Three panels of the same M31 field. Left, "one 30 s sub": a grey frame where only the bright core and a few stars are visible. Middle, "stacked, quick stretch": the full galaxy and its satellites appear, mostly neutral in colour. Right, "finished": the final processed image.](docs/images/m31_progression.jpg)
 
-## A second target: M13
-
-![Two panels of the globular cluster M13 at the same scale. Left, "one 30 s sub": a faint grey smudge with a few stars on a noisy grey-brown sky. Right, "darkroom, 15 subs": the cluster resolved into hundreds of stars with yellow and blue ones visible, on a dark neutral sky.](docs/images/m13_sub_vs_darkroom.jpg)
-
-M13, from 18 × 30 s frames taken before cloud ended the session; 15 were
-stacked (7.5 minutes). A globular cluster is made of stars, so the galaxy
-workflow is wrong for it: StarNet removes the whole cluster, and shrinking
-the stars dims the target. The `cluster` look keeps the stars, skips StarNet,
-and uses a stronger arcsinh stretch that keeps the core resolved. The crop is
-`crop = "1:1"` with `crop_scale = 0.45`, because the cluster is only a few hundred
-pixels across in a 2160×3840 frame.
-
 ## Pipeline
 
 Each stage reads the previous stage's output from a work directory and writes
@@ -154,8 +142,9 @@ Look at the output of each stage before moving on; most problems (a bad
 background model, a failed plate solve, StarNet artefacts) are visible
 immediately and are cheaper to fix there than at the end.
 
-`examples/m31.toml` and `examples/m13.toml` are the configurations for the two
-images above; `examples/m31.sh` is the M31 run written as individual commands.
+`examples/m31.toml` is the configuration for the M31 image above, and
+`examples/m31.sh` is the same run written as individual commands.
+`examples/m13.toml` is the starting point used for the `cluster` look.
 
 ### Settings
 
