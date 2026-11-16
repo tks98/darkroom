@@ -34,6 +34,18 @@ Some of the colour on the right is cosmetic (see `finish` below).
 
 ![Three panels of the same M31 field. Left, "one 30 s sub": a grey frame where only the bright core and a few stars are visible. Middle, "stacked, quick stretch": the full galaxy and its satellites appear, mostly neutral in colour. Right, "finished": the final processed image.](docs/images/m31_progression.jpg)
 
+## A second target: M13
+
+![Two panels of the globular cluster M13 at the same scale. Left, "one 30 s sub": a faint grey smudge with a few stars on a noisy grey-brown sky. Right, "darkroom, 15 subs": the cluster resolved into hundreds of stars with yellow and blue ones visible, on a dark neutral sky.](docs/images/m13_sub_vs_darkroom.jpg)
+
+M13, from 18 × 30 s frames taken before cloud ended the session; 15 were
+stacked (7.5 minutes). A globular cluster is made of stars, so the galaxy
+workflow is wrong for it: StarNet removes the whole cluster, and shrinking
+the stars dims the target. The `cluster` look keeps the stars, skips StarNet,
+and uses a stronger arcsinh stretch that keeps the core resolved. The crop is
+`crop = "1:1"` with `crop_scale = 0.45`, because the cluster is only a few hundred
+pixels across in a 2160×3840 frame.
+
 ## Pipeline
 
 Each stage reads the previous stage's output from a work directory and writes
@@ -142,8 +154,8 @@ Look at the output of each stage before moving on; most problems (a bad
 background model, a failed plate solve, StarNet artefacts) are visible
 immediately and are cheaper to fix there than at the end.
 
-`examples/m31.toml` is the configuration that reproduces the image above;
-`examples/m31.sh` is the same run written as individual commands.
+`examples/m31.toml` and `examples/m13.toml` are the configurations for the two
+images above; `examples/m31.sh` is the M31 run written as individual commands.
 
 ### Settings
 
@@ -154,13 +166,13 @@ and key.
 | Section | Keys |
 |---|---|
 | `[target]` | `name`, `subs`, `dark` (`"auto"`, `"none"` or a path), `dark_library`, `camera`, `look` |
-| `[stack]` | `framing` (`min`, `cog`, `max`), `keep_fwhm`, `keep_round` (percent of frames kept), `clean` |
+| `[stack]` | `framing` (`min`, `cog`, `max`), `keep_fwhm`, `keep_round`, `keep_bkg`, `keep_stars` (percent of frames kept), `clean` |
 | `[bge]` | `smoothing` |
 | `[color]` | `sensor`, `filter`, `focal`, `pixel`, `catalog`, `whiteref`, `catalog_fallback` |
 | `[denoise]` | `strength`, `cpu` |
 | `[stretch]` | `asinh`, `shadows`, `target_bg`, `sat` |
 | `[starnet]` | `dir` |
-| `[finish]` | `gamma`, `star_strength`, `mid`, `sat`, `yb`, `sharpen`, `sharpen_radius`, `black`, `erode`, `neutral`, `crop`, `crop_center` |
+| `[finish]` | `gamma`, `star_strength`, `mid`, `sat`, `yb`, `sharpen`, `sharpen_radius`, `black`, `erode`, `neutral`, `crop`, `crop_center`, `crop_scale`, `stars` |
 
 - **Dark selection.** With `dark = "auto"`, darkroom picks from the dark
   library the master with the same exposure and gain and the nearest sensor
@@ -172,12 +184,24 @@ and key.
   2160×3840 instead of 1710×3632, with edge strips about 20% noisier. `max`
   keeps the bounding box of all frames (2609×4050): its edges are ragged and
   much noisier, about 1% of it is never covered, and it has to be cropped.
+- **Frame selection.** `keep_fwhm` and `keep_round` (90 by default) keep the
+  sharpest and roundest frames. `keep_bkg` and `keep_stars` (100, off) can
+  also drop the frames with the brightest sky or the fewest stars, for
+  cloud. Compare before adopting them: on the M13 data, where thin cloud
+  crossed several frames, dropping the 3 stacked frames with the brightest
+  sky and fewest stars (15 down to 12) left the gradient unchanged and raised
+  the noise by 6%, because rejection and normalisation had already coped.
 - **Crop.** `crop = "2:3"` takes the largest box of that shape, centred on the
-  brightest part of the blurred starless image; `crop_center = "x,y"`
+  brightest part of the blurred image; `crop_scale` (0 to 1) shrinks that box
+  for a target that is small in the frame, and `crop_center = "x,y"`
   overrides the centre. `"x,y,w,h"` crops by pixels.
-- **Presets.** One camera (`seestar-s30-pro`) and one look (`galaxy`, the M31
-  settings) are shipped, in `presets/`. `camera` and `look` also accept the
-  path of your own `.toml`.
+- **Stars.** `stars = "reduce"` is the galaxy workflow: StarNet removes the
+  stars, the rest is enhanced, and the stars go back smaller. `stars = "keep"`
+  does none of that and StarNet is not run; `mid`, `sat`, `black`, `neutral`
+  and the crop still apply, to the whole image.
+- **Presets.** One camera (`seestar-s30-pro`) and two looks are shipped, in
+  `presets/`: `galaxy` (the M31 settings) and `cluster` (the M13 settings).
+  `camera` and `look` also accept the path of your own `.toml`.
 
 `darkroom <command> --help` lists every flag.
 
@@ -222,9 +246,9 @@ links it into `~/.claude/skills/darkroom` so it is available from any folder.
 
 ## Limitations
 
-- Tested on one target (M31), one camera (Seestar S30 Pro) and one platform
-  (macOS on Apple Silicon). The `galaxy` look is that one image's settings;
-  a nebula or a cluster will need its own.
+- Tested on two targets (M31 and M13), one camera (Seestar S30 Pro) and one
+  platform (macOS on Apple Silicon). Each look is one image's settings: the
+  `cluster` look comes from 7.5 minutes of data. A nebula will need its own.
 - One-shot-colour data only. Flats, bias frames and mono/LRGB data are not
   supported yet.
 - Automatic dark selection was tested against a library built from copies of
@@ -235,7 +259,7 @@ links it into `~/.claude/skills/darkroom` so it is available from any folder.
 
 ## Status
 
-Phases 1 to 4 of 5 are done.
+All five planned phases are done.
 
 1. Port of the original one-off scripts into a package and CLI.
 2. `darkroom doctor` and `setup.sh`.
@@ -243,14 +267,22 @@ Phases 1 to 4 of 5 are done.
    catalogue fallback, stack framing, aspect-ratio crop, and skipping stages
    that are up to date.
 4. The Claude Code skill.
+5. A second target (M13), which added the `cluster` look, `stars = "keep"`,
+   `crop_scale`, the `keep_bkg` / `keep_stars` frame filters, and a fix to sky
+   neutralisation.
 
 After phase 1 and again after phase 3 (driven by `darkroom.toml`, with
 automatic dark selection and `crop = "2:3"`) the pipeline was run end to end
 on the 404 M31 subs. Both times every stage's pixel data was identical to the
 original hand-run pipeline's, and the final TIFF and JPEG were byte-identical.
 
-Still to do: validation on a second target (M13, a globular cluster), and a
-look preset made from it.
+Phase 5 changed the last step on purpose. Sky neutralisation used to measure
+the sky colour from the darker half of the sky pixels, which reports a colour
+cast that is not there when one channel is noisier than the others: it added
+a visible blue cast to M13. It now uses every sky pixel. On M31 this moves
+the final image by at most 0.0014 (a third of one 8-bit level); every stage
+before `finish` is still identical. The M31 images in this README were made
+before that fix.
 
 ## Licence
 

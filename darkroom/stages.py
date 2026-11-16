@@ -52,7 +52,8 @@ def remove_process(work: Path, log=print) -> None:
 
 def stack(work: Path, subs: Path, dark: Path | None, framing: str = "min", keep_fwhm: float = 90,
           keep_round: float = 90, clean: bool = False, force: bool = False, reuse: bool = False,
-          out: str = "stack", sub_glob: str = "*.fit") -> None:
+          out: str = "stack", sub_glob: str = "*.fit", keep_bkg: float = 100,
+          keep_stars: float = 100) -> None:
     """dark=None stacks without dark subtraction. ``reuse`` re-frames and re-stacks the
     registered sequence already in <work>/process instead of starting from the subs."""
     work = _abs(work)
@@ -62,6 +63,13 @@ def stack(work: Path, subs: Path, dark: Path | None, framing: str = "min", keep_
     values = {"PROCESS": str(process), "STACK": str(work / out),
               "FRAMING": framing, "KEEP_FWHM": siril.fmt_num(keep_fwhm), "KEEP_ROUND": siril.fmt_num(keep_round),
               "MAXIMIZE": "1" if framing == "max" else ""}
+    more = ""                                   # extra seqapplyreg filters; none at the default 100%
+    if keep_bkg < 100:
+        more += f"-filter-bkg={siril.fmt_num(keep_bkg)}% "
+    if keep_stars < 100:
+        more += f"-filter-nbstars={siril.fmt_num(keep_stars)}% "
+    if more:
+        values["MORE_FILTERS"] = more
     if reuse:
         if force:
             raise tools.StageError("--force and --reuse-registration contradict each other")
@@ -213,7 +221,9 @@ def finish(work: Path, params: FinishParams, out: str = FINAL) -> None:
     from . import finish as fin
     work = _abs(work)
     orig = tools.require_file(work / STRETCHED_TIF, "stretched TIFF (run `darkroom stretch` first)")
-    sl = tools.require_file(work / STARLESS, "starless TIFF (run `darkroom starnet` first)")
+    sl = None
+    if params.stars != "keep":
+        sl = tools.require_file(work / STARLESS, "starless TIFF (run `darkroom starnet` first)")
     if Path(out).name != out:
         raise tools.StageError("--out is a basename inside the work directory, not a path")
     with tools.StageLog(work, "finish") as log:
@@ -234,7 +244,13 @@ def finish_params(f: dict) -> FinishParams:
                         black=f["black"], erode=f["erode"], neutral=f["neutral"],
                         crop=value if kind == "box" else None,
                         crop_aspect=value if kind == "aspect" else None,
-                        crop_center=center if kind == "aspect" else None)
+                        crop_center=center if kind == "aspect" else None,
+                        crop_scale=float(f.get("crop_scale", 1.0)), stars=f.get("stars", "reduce"))
+
+
+def starnet_needed(finish_table: dict) -> bool:
+    """StarNet is skipped when the finish stage keeps the stars as they are."""
+    return finish_table.get("stars", "reduce") != "keep"
 
 
 # ------------------------------------------- recorded parameters, skipping
@@ -256,13 +272,22 @@ def result_params(stage: str, table: dict) -> dict:
     if stage == "stack":
         return {"subs": str(table["subs"]), "dark": str(table["dark"]) if table["dark"] else "none",
                 "framing": table["framing"], "keep_fwhm": float(table["keep_fwhm"]),
-                "keep_round": float(table["keep_round"])}
+                "keep_round": float(table["keep_round"]),
+                # only recorded when in use, so work dirs made before these keys existed stay up to date
+                **{k: float(table[k]) for k in ("keep_bkg", "keep_stars") if float(table.get(k, 100)) < 100}}
     out = {}
     for k in _RESULT_KEYS[stage]:
         v = table[k]
         out[k] = float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and k != "erode" else v
-    if stage == "finish" and parse_crop_spec(out["crop"])[0] != "aspect":
-        out["crop_center"] = None           # only used by an aspect-ratio crop
+    if stage == "finish":
+        aspect = parse_crop_spec(out["crop"])[0] == "aspect"
+        if not aspect:
+            out["crop_center"] = None           # only used by an aspect-ratio crop
+        # recorded only when in use, so work dirs made before these keys existed stay up to date
+        if table.get("stars", "reduce") != "reduce":
+            out["stars"] = table["stars"]
+        if aspect and float(table.get("crop_scale", 1.0)) != 1.0:
+            out["crop_scale"] = float(table["crop_scale"])
     return out
 
 
@@ -284,6 +309,8 @@ def inputs(work: Path, stage: str, params: dict) -> list[Path]:
         return files
     names = {"bge": [STACK], "color": [BGE], "denoise": [SPCC], "stretch": [DENOISED],
              "starnet": [STRETCHED_TIF], "finish": [STRETCHED_TIF, STARLESS]}[stage]
+    if stage == "finish" and params.get("stars") == "keep":
+        names = [STRETCHED_TIF]                 # the starless image is not read
     return [work / n for n in names]
 
 

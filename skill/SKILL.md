@@ -78,6 +78,14 @@ cheap to fix at the stage that caused them and expensive to notice at the end.
 - If the camera made its own stack of the same session, put the two side by
   side. darkroom should be at least as good; if it is not, stop and find out
   why before going on.
+- Cloud: the default filters rank frames by star sharpness and roundness
+  only. Fully clouded frames fail registration by themselves; frames with
+  thin cloud can get through. Before reaching for `[stack] keep_bkg` /
+  `keep_stars`, compare a filtered restack
+  (`darkroom stack --work WORK --reuse-registration --keep-bkg 70 --keep-stars 70 --out stack_clean`)
+  against the default for noise and gradient. On M13, dropping the 3 frames with
+  the brightest sky and fewest stars (15 down to 12) left the gradient
+  unchanged and made the stack 6% noisier.
 - Dark temperature: if `init` or `stack` warns that the master dark is more
   than 5 °C from the subs, also make a no-dark stack and compare noise and
   hot pixels before choosing. (On the M31 data the dark was 10.6 °C off; the
@@ -120,7 +128,9 @@ cheap to fix at the stage that caused them and expensive to notice at the end.
 **After `finish`**
 Check, at 1:1, the core, each corner, any companion objects, and an outer
 part of the target:
-- Background neutral and even (compare R, G and B of the sky).
+- Background neutral and even. Measure R, G and B as the median of all the
+  pixels in a patch of sky. Do not measure only the darkest pixels: that is
+  biased toward the noisiest channel and shows a cast that is not there.
 - No clipped highlights.
 - Stars smaller but all still present. If faint stars vanished, the star
   reduction is too strong.
@@ -155,9 +165,29 @@ What the main `finish` settings do, and what going too far looks like:
 `yb` is cosmetic. It makes regions easier to tell apart; it is not measured
 colour. Say so when you describe the result.
 
-A new kind of target (a nebula, a cluster) will not suit the galaxy look
-unchanged. Expect to tune `stretch` and `finish` from scratch and tell the
-user that the defaults were made for one galaxy.
+## Choosing a look
+
+Two looks are shipped. Pass `--look` to `init`, or set `[target] look`.
+
+- **`galaxy`** (the default): StarNet removes the stars, the galaxy is
+  enhanced, the stars go back smaller. Made on M31.
+- **`cluster`**: for targets that are made of stars. StarNet would remove the
+  target itself and star reduction would dim it, so the look sets
+  `[finish] stars = "keep"`: StarNet is not run, and `gamma`,
+  `star_strength`, `yb`, `sharpen` and `erode` do nothing. It uses a stronger
+  arcsinh stretch (100) so the core stays resolved. Made on M13 from 7.5
+  minutes of data.
+
+If you are unsure which applies, run the galaxy look once and view
+`starless.tif`: if the target is gone from it, use `stars = "keep"`.
+
+For a cluster, tune `[stretch] asinh` first (too low washes the core to
+white, too high mottles the sky with colour noise), then `[finish] sat` and
+`black`. A small target needs `crop = "1:1"` (or another shape) with
+`crop_scale` below 1.
+
+A nebula has no look yet. Expect to tune `stretch` and `finish` from scratch,
+and tell the user that each look was made from a single image.
 
 ## Known failures
 

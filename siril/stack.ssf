@@ -23,9 +23,10 @@ cd "{{PROCESS}}"
 register pp_light -2pass -maxstars=1000
 
 # 4. Apply transforms, keep the best frames by weighted FWHM and roundness
-#    (default 90% each), frame the output (default min: the area common to
-#    all frames)
-seqapplyreg pp_light -filter-wfwhm={{KEEP_FWHM=90}}% -filter-round={{KEEP_ROUND=90}}% -framing={{FRAMING=min}}
+#    (default 90% each) and optionally by background level and star count
+#    (keep_bkg / keep_stars, off by default), frame the output (default min:
+#    the area common to all frames)
+seqapplyreg pp_light -filter-wfwhm={{KEEP_FWHM=90}}% -filter-round={{KEEP_ROUND=90}}% {{MORE_FILTERS=}}-framing={{FRAMING=min}}
 
 # 5. Stack: winsorized sigma rejection, add+scale normalization, weight by wFWHM
 #    (-maximize is needed to stack a -framing=max sequence)
