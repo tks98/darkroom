@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "darkroom"
 version = "0.1.0"
-description = "Calibrate, stack, denoise, star-reduce and finish astrophotos from the command line"
+description = "Turns raw deep-sky subs into a finished image with Siril, GraXpert and StarNet."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
