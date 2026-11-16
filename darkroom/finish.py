@@ -33,6 +33,8 @@ class FinishParams:
     erode: int = 0
     neutral: bool = True
     crop: tuple[int, int, int, int] | None = None   # x, y, w, h
+    crop_aspect: tuple[int, int] | None = None      # W:H; box chosen around the target (see aspect_box)
+    crop_center: tuple[int, int] | None = None      # x, y; overrides the detected target centre
 
 
 def load(p):
@@ -95,6 +97,68 @@ def parse_crop(s: str) -> tuple[int, int, int, int]:
     return tuple(parts)
 
 
+def parse_aspect(s: str) -> tuple[int, int]:
+    """'2:3' -> (2, 3): width:height, positive integers."""
+    parts = s.split(":")
+    try:
+        w, h = (int(v) for v in parts)
+    except ValueError:
+        raise ValueError(f"aspect ratio wants W:H with whole numbers, got {s!r}") from None
+    if w <= 0 or h <= 0:
+        raise ValueError(f"aspect ratio wants positive numbers, got {s!r}")
+    return w, h
+
+
+def parse_crop_spec(s: str | None):
+    """A crop setting as written in the config or on the command line.
+
+    Returns ("none", None), ("box", (x, y, w, h)) or ("aspect", (W, H)).
+    """
+    t = (s or "none").strip()
+    if t.lower() == "none":
+        return "none", None
+    if ":" in t:
+        return "aspect", parse_aspect(t)
+    try:
+        box = parse_crop(t)
+    except ValueError:
+        raise ValueError(f'crop wants "none", "x,y,w,h" or an aspect ratio like "2:3", got {s!r}') from None
+    if box[0] < 0 or box[1] < 0 or box[2] <= 0 or box[3] <= 0:
+        raise ValueError(f"crop box needs x,y >= 0 and w,h > 0, got {s!r}")
+    return "box", box
+
+
+def parse_center(s: str) -> tuple[int, int]:
+    try:
+        x, y = (int(v) for v in s.split(","))
+    except ValueError:
+        raise ValueError(f'crop centre wants "x,y" in pixels, got {s!r}') from None
+    return x, y
+
+
+def target_center(starless) -> tuple[int, int]:
+    """(x, y) of the brightest point of the starless image's mean-RGB luminance, blurred with a
+    20 px Gaussian: the core of the galaxy or nebula rather than a leftover star."""
+    L = ndi.gaussian_filter(starless.mean(-1), 20)
+    y, x = np.unravel_index(int(np.argmax(L)), L.shape)
+    return int(x), int(y)
+
+
+def aspect_box(width: int, height: int, aspect: tuple[int, int], center: tuple[int, int]):
+    """Largest box of aspect W:H that fits in a width x height image, centred on ``center`` and
+    clamped to the image. Integer maths: the limiting side is used in full, the other is
+    floor(side * ratio); the origin is centre - size // 2."""
+    aw, ah = aspect
+    if width * ah <= height * aw:          # width is the limiting side
+        w, h = width, width * ah // aw
+    else:
+        w, h = height * aw // ah, height
+    cx, cy = center
+    x0 = min(max(cx - w // 2, 0), width - w)
+    y0 = min(max(cy - h // 2, 0), height - h)
+    return x0, y0, w, h
+
+
 def recombine(orig, sl, p: FinishParams, log=print):
     stars = unscreen(orig, sl)
 
@@ -127,8 +191,20 @@ def recombine(orig, sl, p: FinishParams, log=print):
     if p.neutral:
         out = neutralize(out, gm, log)
 
-    if p.crop:
-        out = crop(out, p.crop)
+    box = p.crop
+    if box is None and p.crop_aspect:
+        H, W = sl.shape[:2]
+        center = p.crop_center or target_center(sl)
+        box = aspect_box(W, H, p.crop_aspect, center)
+        log(f"crop {p.crop_aspect[0]}:{p.crop_aspect[1]} around x={center[0]}, y={center[1]}"
+            f"{' (given)' if p.crop_center else ' (brightest point of the blurred starless image)'}"
+            f" -> {box[0]},{box[1]},{box[2]},{box[3]}")
+    if box:
+        H, W = out.shape[:2]
+        x, y, w, h = box
+        if x + w > W or y + h > H:
+            raise ValueError(f"crop {x},{y},{w},{h} does not fit in the {W}x{H} image")
+        out = crop(out, box)
     return out
 
 

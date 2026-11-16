@@ -1,4 +1,14 @@
-"""Render the Siril script templates in siril/ and run them with siril-cli."""
+"""Render the Siril script templates in siril/ and run them with siril-cli.
+
+Template syntax (deliberately tiny):
+
+  {{NAME}}            required placeholder
+  {{NAME=default}}    optional placeholder; ``default`` is used when no value is given
+  {{if NAME}}line     keep ``line`` only when NAME has a non-empty value
+  {{ifnot NAME}}line  keep ``line`` only when NAME is missing or empty
+
+Values must not contain double quotes (Siril scripts cannot quote them).
+"""
 from __future__ import annotations
 
 import re
@@ -6,7 +16,8 @@ from pathlib import Path
 
 from . import tools
 
-_PLACEHOLDER = re.compile(r"\{\{([A-Z_]+)\}\}")
+_PLACEHOLDER = re.compile(r"\{\{([A-Z_]+)(?:=([^{}]*))?\}\}")
+_COND = re.compile(r"^\{\{(if|ifnot) ([A-Z_]+)\}\}")
 
 
 def template_dir() -> Path:
@@ -23,18 +34,39 @@ def fmt_num(x: float) -> str:
 
 
 def render(template: str, values: dict[str, str]) -> str:
-    """Replace {{NAME}} placeholders. Every placeholder must have a value and vice versa."""
-    found = set(_PLACEHOLDER.findall(template))
-    missing = found - values.keys()
+    """Replace placeholders. Every required placeholder must have a value, every value a use."""
+    lines, cond_names = [], set()
+    for line in template.splitlines(keepends=True):
+        m = _COND.match(line)
+        if m:
+            kind, name = m.groups()
+            cond_names.add(name)
+            on = bool(values.get(name))
+            if (kind == "if") != on:
+                continue
+            line = line[m.end():]
+        lines.append(line)
+    body = "".join(lines)
+
+    required, optional = set(), set()
+    for m in _PLACEHOLDER.finditer(template):          # whole template: names in dropped lines count
+        (optional if m.group(2) is not None else required).add(m.group(1))
+    missing = required - values.keys()
     if missing:
         raise KeyError(f"no value for placeholder(s): {sorted(missing)}")
-    unused = values.keys() - found
+    unused = values.keys() - required - optional - cond_names
     if unused:
         raise KeyError(f"value(s) not used by template: {sorted(unused)}")
     for k, v in values.items():
         if '"' in v:
             raise ValueError(f"{k} contains a double quote, which Siril scripts cannot quote: {v!r}")
-    out = _PLACEHOLDER.sub(lambda m: values[m.group(1)], template)
+
+    def sub(m):
+        name, default = m.group(1), m.group(2)
+        if name in values:
+            return values[name]
+        return default
+    out = _PLACEHOLDER.sub(sub, body)
     if "{{" in out or "}}" in out:
         raise ValueError("unrendered placeholder left in Siril script")
     return out

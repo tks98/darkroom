@@ -25,6 +25,12 @@ darkroom finish  --work "$WORK" --gamma 1.6 --star-strength 0.95 --mid 0.45 --sa
 # Same thing in one go (all settings above are the defaults):
 #   darkroom run --subs "$SUBS" --dark "$DARK" --work "$WORK" --crop 0,512,1710,2565
 #
+# Or driven by a config file (see examples/m31.toml): `darkroom init` writes
+# $WORK/darkroom.toml from the FITS headers, and `darkroom run` then needs no
+# other flags and skips stages whose output is already up to date:
+#   darkroom init --work "$WORK" --subs "$SUBS" --dark "$DARK"
+#   darkroom run  --work "$WORK" --crop 2:3
+#
 # The calibrated/registered frames in $WORK/process are only needed by the
-# stack stage; delete them afterwards to free the space:
+# stack stage; delete them afterwards to free the space (or stack with --clean):
 #   rm -rf "$WORK/process"

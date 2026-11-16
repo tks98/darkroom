@@ -1,0 +1,25 @@
+# Look preset: galaxy. The stretch and finish settings used for M31
+# (a large, bright spiral in a dense star field). A starting point for similar
+# targets, not tuned for anything else. Same keys as darkroom.toml; sits above
+# the camera preset and below darkroom.toml in precedence.
+
+[color]
+whiteref = "Average Spiral Galaxy"   # SPCC white reference
+
+[stretch]
+asinh = 25                           # asinh -human stretch factor
+shadows = -2.5                       # autostretch shadows clipping (sigma)
+target_bg = 0.10                     # autostretch target background
+sat = 0.35                           # Siril satu amount
+
+[finish]
+gamma = 1.6                          # >1 dims star halos more than cores
+star_strength = 0.95                 # star layer multiplier
+mid = 0.45                           # midtone lift on the starless layer (<0.5 brightens)
+sat = 1.2                            # saturation on the starless layer
+yb = 1.8                             # yellow/blue contrast inside the galaxy (1 = off; cosmetic)
+sharpen = 0.8                        # unsharp-mask amount on the galaxy luminance
+sharpen_radius = 2.0                 # unsharp-mask Gaussian sigma (px)
+black = 0.02                         # black point lift on the starless layer
+erode = 0                            # 3x3 erosion passes on the star layer
+neutral = true                       # neutralise the sky colour
