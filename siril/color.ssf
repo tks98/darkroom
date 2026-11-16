@@ -8,5 +8,5 @@ setext fit
 cd "{{WORK}}"
 load bge.fits
 platesolve -focal={{FOCAL}} -pixelsize={{PIXEL}} -catalog={{CATALOG}}
-spcc "-oscsensor={{SENSOR}}" "-oscfilter={{FILTER}}" "-whiteref=Average Spiral Galaxy"
+spcc "-oscsensor={{SENSOR}}" "-oscfilter={{FILTER}}" "-whiteref={{WHITEREF=Average Spiral Galaxy}}"
 save spcc

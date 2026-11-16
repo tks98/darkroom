@@ -1,0 +1,29 @@
+# Camera preset: ZWO Seestar S30 Pro (telephoto camera).
+# Values checked against the FITS headers the Seestar writes and against one
+# processed target (M31). Settings sections ([color], ...) use the same keys as
+# darkroom.toml and sit below it and the look preset in precedence.
+
+[camera]
+name = "ZWO Seestar S30 Pro"
+match_keyword = "CREATOR"            # FITS keyword that identifies the camera
+match = "ZWO Seestar S30 Pro"        # ... and the text it must contain
+bayer = "GRBG"                       # expected BAYERPAT of the subs
+sub_glob = "Light_*.fit"             # light frames inside the subs folder
+
+# FITS FILTER value -> Siril SPCC filter name. `darkroom init` uses this to
+# fill in [color] filter.
+[filters]
+IRCUT = "UV/IR Block"
+LP = "ZWO Seestar LP"
+
+# Master-dark library as the Seestar stores it:
+#   <library>/<exposure>s/MasterDark_<nframes>_<exposure>s_<temp>C_<YYYYMMDD-HHMMSS>.fit
+[darks]
+glob = "MasterDark_*.fit"
+filename = 'MasterDark_(?P<nframes>\d+)_(?P<exposure>\d+(?:\.\d+)?)s_(?P<temp>-?\d+(?:\.\d+)?)C_(?P<date>\d{8}-\d{6})\.fit'
+
+[color]
+sensor = "Sony IMX585"
+filter = "UV/IR Block"               # the built-in IR-cut filter
+focal = 160
+pixel = 2.9

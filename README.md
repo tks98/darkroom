@@ -17,9 +17,9 @@ next target can be processed the same way.
 
 M31 with M32 and M110. ZWO Seestar S30 Pro (160 mm focal length, Sony IMX585
 one-shot-colour sensor, IR-cut filter, equatorial mode), gain 200, sensor
-around 21 °C. 346 of 404 × 30 s sub-frames kept, 2 h 53 min total, taken on
-the night of 2026-11-15. Calibrated with the Seestar's own 5-frame master dark
-only; no flats or bias.
+cooling from 21 °C to 9 °C over the session. 346 of 404 × 30 s sub-frames
+kept, 2 h 53 min total, taken on the night of 2026-11-15. Calibrated with the
+Seestar's own 5-frame master dark only; no flats or bias.
 
 ## Compared with the Seestar's own stack
 
@@ -83,7 +83,7 @@ None of these are bundled. darkroom finds them through environment variables:
 |---|---|
 | `DARKROOM_SIRIL` | `siril-cli` executable (defaults to the standard macOS app location) |
 | `DARKROOM_GRAXPERT` | GraXpert executable (defaults to the standard macOS app location) |
-| `DARKROOM_STARNET_DIR` | folder containing the StarNet CLI and its weights (no default; `--starnet-dir` also works) |
+| `DARKROOM_STARNET_DIR` | folder containing the StarNet CLI and its weights (no default; `[starnet] dir` in the config or `--starnet-dir` also work) |
 | `DARKROOM_GRAXPERT_MODEL` | GraXpert denoise model file, if not in GraXpert's default location |
 | `DARKROOM_CACHE` | where the fixed-batch copy of the denoise model is built on first use (defaults to `~/Library/Caches/darkroom`) |
 
@@ -92,62 +92,101 @@ None of these are bundled. darkroom finds them through environment variables:
 ```sh
 git clone https://github.com/tks98/darkroom.git
 cd darkroom
-python3 -m venv .venv
-.venv/bin/pip install -e .
+bash setup.sh                # add --starnet-dir DIR to include StarNet in the check
 source .venv/bin/activate    # puts `darkroom` on the PATH
 ```
 
-To run the tests (synthetic arrays only, no image data or external tools
-needed): `.venv/bin/pip install -e '.[dev]'`, then `pytest`.
+`setup.sh` creates `.venv`, installs the package, builds the fixed-batch copy
+of the denoise model, links the Claude Code skill (see below; `--no-skill`
+skips it) and runs `darkroom doctor`. It can be run again at any time.
+
+`darkroom doctor` checks everything a run depends on and prints a fix for
+whatever is wrong: Python and its packages, Siril, GraXpert, the denoise
+model, that the model really runs on the GPU, StarNet (including whether
+Gatekeeper is blocking it), the catalogue servers, and free disk space
+(`--work DIR --subs DIR`). It only reports; it changes nothing on the system.
+
+To run the tests (synthetic arrays and fakes only; no image data, external
+tools or network): `pytest`.
 
 ## Usage
 
-The M31 run, stage by stage. `examples/m31.sh` holds the full sequence.
+Describe the target once, then run:
 
 ```sh
-darkroom stack   --subs path/to/lights --dark path/to/master_dark.fit --work m31
-darkroom bge     --work m31
-darkroom color   --work m31 --sensor "Sony IMX585" --filter "UV/IR Block" --focal 160 --pixel 2.9
-darkroom denoise --work m31 --strength 0.6
-darkroom stretch --work m31
-darkroom starnet --work m31
-darkroom finish  --work m31 --crop 0,512,1710,2565
+darkroom init --work m31 --subs path/to/lights --dark-library path/to/darklibrary
+# look over m31/darkroom.toml: set [starnet] dir and [finish] crop
+darkroom run  --work m31
 ```
 
-Or all at once, and later from any stage onward:
+`init` reads the subs' FITS headers, detects the camera preset, and writes a
+commented `darkroom.toml` in the work directory that lists every setting and
+where its value comes from. It prints a summary: frame count, total
+integration, sensor temperature range, and the master dark it would pick. Use
+`--dark FILE` for a specific master dark or `--no-dark` for none.
+
+`run` executes the stages in order and skips any stage whose output is up to
+date. After changing a setting, run it again: only the stages affected by the
+change are redone. `--from STAGE` forces that stage and everything after it,
+`--to STAGE` stops early, `--force` redoes everything.
+
+Every stage is also a command of its own, and flags override the config file:
 
 ```sh
-darkroom run --work m31 --subs path/to/lights --dark path/to/master_dark.fit --crop 0,512,1710,2565
-darkroom run --work m31 --from finish --crop 0,512,1710,2565
+darkroom run    --work m31 --to stack              # stop after stacking and look at it
+darkroom finish --work m31 --gamma 1.4 --out try   # try a variant without touching final.*
+darkroom stack  --work m31 --reuse-registration --framing cog --out stack_cog
 ```
 
 Look at the output of each stage before moving on; most problems (a bad
 background model, a failed plate solve, StarNet artefacts) are visible
 immediately and are cheaper to fix there than at the end.
 
-### Options
+`examples/m31.toml` is the configuration that reproduces the image above;
+`examples/m31.sh` is the same run written as individual commands.
 
-```
-darkroom stack   --subs DIR --dark FILE --work DIR
-darkroom bge     --work DIR [--smoothing 0.1]
-darkroom color   --work DIR [--sensor "Sony IMX585"] [--filter "UV/IR Block"] [--focal 160] [--pixel 2.9] [--catalog gaia]
-darkroom denoise --work DIR [--strength 0.6] [--cpu]
-darkroom stretch --work DIR [--asinh 25] [--shadows -2.5] [--target-bg 0.10] [--sat 0.35]
-darkroom starnet --work DIR [--starnet-dir DIR]
-darkroom finish  --work DIR [--gamma 1.6] [--star-strength 0.95] [--mid 0.45] [--sat 1.2] [--yb 1.8]
-                            [--sharpen 0.8] [--sharpen-radius 2.0] [--black 0.02] [--erode 0]
-                            [--no-neutral] [--crop x,y,w,h] [--out final]
-darkroom run     --work DIR [--subs DIR --dark FILE] [--from STAGE] [--to STAGE]
-                            [--starnet-dir DIR] [--cpu] [--crop x,y,w,h]
-darkroom star-reduce IN OUT [--amount 0.85] [--iters 2] [--radius 6] [--k 4.0] [--mask FILE]
-                            # morphological star reduction, for when StarNet isn't available
-```
+### Settings
 
-`STAGE` is one of `stack`, `bge`, `color`, `denoise`, `stretch`, `starnet`,
-`finish`. `darkroom <command> --help` lists every option.
+Precedence: command-line flag > `darkroom.toml` > look preset > camera preset >
+built-in default. Unknown keys and bad values are errors that name the file
+and key.
 
-Defaults are the values used for the M31 image. They are a starting point for
-similar data, not tuned for anything else.
+| Section | Keys |
+|---|---|
+| `[target]` | `name`, `subs`, `dark` (`"auto"`, `"none"` or a path), `dark_library`, `camera`, `look` |
+| `[stack]` | `framing` (`min`, `cog`, `max`), `keep_fwhm`, `keep_round` (percent of frames kept), `clean` |
+| `[bge]` | `smoothing` |
+| `[color]` | `sensor`, `filter`, `focal`, `pixel`, `catalog`, `whiteref`, `catalog_fallback` |
+| `[denoise]` | `strength`, `cpu` |
+| `[stretch]` | `asinh`, `shadows`, `target_bg`, `sat` |
+| `[starnet]` | `dir` |
+| `[finish]` | `gamma`, `star_strength`, `mid`, `sat`, `yb`, `sharpen`, `sharpen_radius`, `black`, `erode`, `neutral`, `crop`, `crop_center` |
+
+- **Dark selection.** With `dark = "auto"`, darkroom picks from the dark
+  library the master with the same exposure and gain and the nearest sensor
+  temperature (ties go to the newest), and warns when the nearest is more
+  than 5 °C away. The library layout is the Seestar's:
+  `<library>/<exposure>s/MasterDark_*.fit`.
+- **Framing.** `min` keeps the area common to all frames. `cog` keeps the full
+  sensor frame at the frames' centre of gravity; on the M31 data that is
+  2160×3840 instead of 1710×3632, with edge strips about 20% noisier. `max`
+  keeps the bounding box of all frames (2609×4050): its edges are ragged and
+  much noisier, about 1% of it is never covered, and it has to be cropped.
+- **Crop.** `crop = "2:3"` takes the largest box of that shape, centred on the
+  brightest part of the blurred starless image; `crop_center = "x,y"`
+  overrides the centre. `"x,y,w,h"` crops by pixels.
+- **Presets.** One camera (`seestar-s30-pro`) and one look (`galaxy`, the M31
+  settings) are shipped, in `presets/`. `camera` and `look` also accept the
+  path of your own `.toml`.
+
+`darkroom <command> --help` lists every flag.
+
+## Claude Code skill
+
+`skill/SKILL.md` describes this workflow for [Claude Code](https://claude.com/claude-code):
+what to check by eye after each stage, how to compare variants before
+choosing a setting, the known failures, and what must not be shared. `setup.sh`
+links it into `~/.claude/skills/darkroom` so it is available from any folder.
 
 ## Known issues
 
@@ -155,11 +194,18 @@ similar data, not tuned for anything else.
   on macOS 27, and its bundled onnxruntime is slower than the CPU path when
   forced onto the GPU. darkroom works around this by running a fixed-batch copy
   of the same model with onnxruntime 1.32. `--cpu` uses the CPU instead.
-- **Catalogue server unreachable.** During the M31 run Siril's online
-  catalogue host (VizieR TAP) could not be reached, so plate solving failed.
-  It worked after a Gaia DR3 star list for the field was fetched from ESA's
-  Gaia archive and placed in Siril's download cache. That step was manual; an
-  automatic fallback is planned but not built.
+- **Catalogue server unreachable.** Siril's online catalogue host (VizieR TAP)
+  was unreachable on both days this was developed, which makes plate solving
+  fail. The `color` stage detects that failure, fetches the Gaia DR3 star list
+  for the field from ESA's Gaia archive into Siril's download cache, and
+  retries. It adds about a minute, mostly Siril's own timeout.
+  `--no-catalog-fallback` turns it off. The request contains sky coordinates
+  only.
+- **Master dark temperature.** The Seestar's sensor is not cooled. During the
+  M31 session it fell from 21.4 °C to 8.6 °C (median 10.9 °C), while the only
+  master dark was taken at 21.5 °C. darkroom warns about a mismatch like this.
+  For this data it mattered little: a stack without the dark was 2% noisier
+  in the background and kept some isolated hot pixels.
 - **`siril-cli` working directory.** `siril-cli` starts in `~/Pictures`, so
   scripts have to be passed by absolute path. darkroom does this; it matters
   only if you run the scripts in `siril/` by hand.
@@ -167,8 +213,8 @@ similar data, not tuned for anything else.
   that runs under Rosetta. Gatekeeper blocks it until you choose to allow it.
   Whether to do that is your decision. Clearing the quarantine flag on the
   StarNet folder (`xattr -dr com.apple.quarantine <folder>`) is what allows it
-  to run. Without StarNet, `darkroom star-reduce` gives a weaker,
-  morphological alternative.
+  to run; `darkroom doctor` reports the flag and never clears it. Without
+  StarNet, `darkroom star-reduce` gives a weaker, morphological alternative.
 - **Siril preferences.** The Siril scripts change settings that Siril may
   keep: `stack` switches processed images to 16-bit (`set16bits`), and the
   plate solve in `color` saves the focal length and pixel size it was given as
@@ -177,31 +223,34 @@ similar data, not tuned for anything else.
 ## Limitations
 
 - Tested on one target (M31), one camera (Seestar S30 Pro) and one platform
-  (macOS on Apple Silicon).
+  (macOS on Apple Silicon). The `galaxy` look is that one image's settings;
+  a nebula or a cluster will need its own.
 - One-shot-colour data only. Flats, bias frames and mono/LRGB data are not
   supported yet.
-- Calibration uses a master dark you supply; there is no automatic dark
-  selection.
+- Automatic dark selection was tested against a library built from copies of
+  one real master dark, not against a full Seestar dark library.
+- Not tested: the `--cpu` denoise path, a non-editable (wheel) install,
+  `setup.sh` creating a fresh `.venv`, the `LP` filter mapping, and
+  `keep_fwhm` / `keep_round` values other than 90.
 
 ## Status
 
-Phase 1 of 5. Done: the one-off scripts ported into a package and CLI. Run
-end to end on the 404 M31 subs, it reproduces the original result exactly:
-every stage's pixel data is identical to the hand-run pipeline's, and the
-final TIFF and JPEG are byte-identical. The `--cpu` denoise path and a
-non-editable install have not been tested.
+Phases 1 to 4 of 5 are done.
 
-Planned:
+1. Port of the original one-off scripts into a package and CLI.
+2. `darkroom doctor` and `setup.sh`.
+3. `darkroom.toml`, `darkroom init`, presets, automatic dark selection, the
+   catalogue fallback, stack framing, aspect-ratio crop, and skipping stages
+   that are up to date.
+4. The Claude Code skill.
 
-- `darkroom doctor` to check the environment, and a setup script
-- a per-target config file; camera presets, starting with the Seestar S30 Pro
-- automatic dark selection
-- a catalogue fallback that works for any field
-- a stack-framing option
-- skipping stages whose output is already up to date
-- a Claude Code skill describing the workflow and the points where the output
-  should be checked by eye
-- validation on a second target (M13)
+After phase 1 and again after phase 3 (driven by `darkroom.toml`, with
+automatic dark selection and `crop = "2:3"`) the pipeline was run end to end
+on the 404 M31 subs. Both times every stage's pixel data was identical to the
+original hand-run pipeline's, and the final TIFF and JPEG were byte-identical.
+
+Still to do: validation on a second target (M13, a globular cluster), and a
+look preset made from it.
 
 ## Licence
 

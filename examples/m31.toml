@@ -1,0 +1,60 @@
+# M31 (Andromeda), ZWO Seestar S30 Pro: the settings that produced the image in
+# the README. Copy to <work>/darkroom.toml, edit the paths, then:
+#
+#   darkroom run --work <work>
+#
+# `darkroom init --work <work> --subs <lights> --dark-library <library>` writes
+# the same file from the FITS headers, with every other setting listed and
+# commented. Anything not set here comes from the look preset, then the camera
+# preset, then the built-in defaults (all three hold the M31 values).
+
+[target]
+name = "M 31"
+subs = "/path/to/M 31_sub"               # folder with the 30 s light subs (Light_*.fit)
+dark = "auto"                            # or "none", or "/path/to/MasterDark_30s.fit"
+dark_library = "/path/to/darklibrary"    # Seestar master-dark library, used by dark = "auto"
+camera = "seestar-s30-pro"
+look = "galaxy"
+
+[stack]
+framing = "min"                          # crop to the area common to all frames
+keep_fwhm = 90
+keep_round = 90
+clean = false                            # true deletes <work>/process (~31 GB) after stacking
+
+[bge]
+smoothing = 0.1
+
+[color]
+sensor = "Sony IMX585"
+filter = "UV/IR Block"
+focal = 160
+pixel = 2.9
+catalog = "gaia"
+whiteref = "Average Spiral Galaxy"
+catalog_fallback = true
+
+[denoise]
+strength = 0.6
+
+[stretch]
+asinh = 25
+shadows = -2.5
+target_bg = 0.10
+sat = 0.35
+
+[starnet]
+dir = "/path/to/StarNetv2CLI_MacOS"      # or set DARKROOM_STARNET_DIR
+
+[finish]
+gamma = 1.6
+star_strength = 0.95
+mid = 0.45
+sat = 1.2
+yb = 1.8
+sharpen = 0.8
+sharpen_radius = 2.0
+black = 0.02
+erode = 0
+neutral = true
+crop = "2:3"                             # for this data the same as "0,512,1710,2565"

@@ -2,7 +2,8 @@
 # darkroom: calibrate, register, stack (Siril 1.4)
 # OSC lights (GRBG), master dark only (no flats/bias)
 # Rendered by `darkroom stack`; the double-brace placeholders are replaced with
-# absolute, quoted paths (siril-cli starts in ~/Pictures).
+# absolute, quoted paths (siril-cli starts in ~/Pictures) and the [stack]
+# settings. Template syntax (conditional lines, defaults): see darkroom/siril.py.
 ############################################
 requires 1.4.0
 setext fit
@@ -13,17 +14,22 @@ cd "{{SUBS}}"
 link light "-out={{PROCESS}}"
 
 # 2. Dark-subtract, fix hot/cold pixels from the dark, debayer
+#    (without a dark: debayer only)
 cd "{{PROCESS}}"
-calibrate light "-dark={{DARK}}" -cc=dark 3 3 -cfa -equalize_cfa -debayer
+{{if DARK}}calibrate light "-dark={{DARK}}" -cc=dark 3 3 -cfa -equalize_cfa -debayer
+{{ifnot DARK}}calibrate light -cfa -equalize_cfa -debayer
 
 # 3. Register: pick best reference, compute transforms (homography)
 register pp_light -2pass -maxstars=1000
 
-# 4. Apply transforms, keep best ~90% by weighted FWHM and roundness,
-#    crop to the area common to all frames
-seqapplyreg pp_light -filter-wfwhm=90% -filter-round=90% -framing=min
+# 4. Apply transforms, keep the best frames by weighted FWHM and roundness
+#    (default 90% each), frame the output (default min: the area common to
+#    all frames)
+seqapplyreg pp_light -filter-wfwhm={{KEEP_FWHM=90}}% -filter-round={{KEEP_ROUND=90}}% -framing={{FRAMING=min}}
 
 # 5. Stack: winsorized sigma rejection, add+scale normalization, weight by wFWHM
-stack r_pp_light rej w 3 3 -norm=addscale -output_norm -weight=wfwhm -32b "-out={{STACK}}"
+#    (-maximize is needed to stack a -framing=max sequence)
+{{ifnot MAXIMIZE}}stack r_pp_light rej w 3 3 -norm=addscale -output_norm -weight=wfwhm -32b "-out={{STACK}}"
+{{if MAXIMIZE}}stack r_pp_light rej w 3 3 -norm=addscale -output_norm -weight=wfwhm -maximize -32b "-out={{STACK}}"
 
 close
