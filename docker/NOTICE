@@ -1,0 +1,14 @@
+This image contains:
+
+- darkroom, GPL-3.0-or-later. Source: https://github.com/tks98/darkroom
+- Siril 1.4.5 (Linux AppImage, unpacked), GPL-3.0-or-later.
+  Source: https://gitlab.com/free-astro/siril (tag 1.4.5), and https://free-astro.org/download/siril-1.4.5.tar.bz2
+- GraXpert 3.1.0rc2 (Linux build), GPL-3.0. Source: https://github.com/Steffenhir/GraXpert (tag 3.1.0rc2)
+  GraXpert bundles third-party components; see /opt/graxpert/GraXpert-linux/frozen_application_license.txt
+- Debian 13 base packages, under their own licences (see /usr/share/doc/*/copyright).
+
+Not included, downloaded at run time into the /cache volume:
+
+- GraXpert's AI models, CC BY-NC-SA 4.0, downloaded by GraXpert from its own server.
+- StarNet2, downloaded by `darkroom get-starnet` from https://starnetastro.com only after
+  you read and accept its licence. It is not redistributed here.

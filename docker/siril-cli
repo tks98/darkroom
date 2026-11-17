@@ -1,0 +1,7 @@
+#!/bin/sh
+# Siril's AppImage ships its own dynamic loader and C library. Starting siril-cli
+# directly on the image's newer glibc crashes, so go through the AppImage's launcher.
+# APPDIR is what the AppImage runtime would set; Siril uses it to find its bundled
+# Python module, which colour calibration (SPCC) needs to fetch Gaia spectra.
+export APPDIR=/opt/siril
+exec /opt/siril/AppRun siril-cli "$@"

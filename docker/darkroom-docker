@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Run darkroom in its Docker image with your folders mounted.
+#
+#   docker/darkroom-docker --work DIR [--subs DIR] [--darks DIR] [--image NAME] -- <darkroom command>
+#
+# Inside the container the folders are /work, /subs (read-only) and /darks (read-only),
+# so use those paths in darkroom commands and in darkroom.toml:
+#
+#   docker/darkroom-docker --subs ~/astro/M31_sub --darks ~/astro/darklibrary --work ~/astro/m31 -- \
+#       init --work /work --subs /subs --dark-library /darks
+#   docker/darkroom-docker --work ~/astro/m31 -- get-starnet          # once; you must accept StarNet's licence
+#   docker/darkroom-docker --subs ~/astro/M31_sub --darks ~/astro/darklibrary --work ~/astro/m31 -- run --work /work
+#
+# Downloads (GraXpert's models, StarNet) are kept in the Docker volume "darkroom-cache".
+set -euo pipefail
+
+image="${DARKROOM_IMAGE:-darkroom}"
+work="" subs="" darks=""
+usage() { sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; }
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --work)  work="$2"; shift 2 ;;
+        --subs)  subs="$2"; shift 2 ;;
+        --darks) darks="$2"; shift 2 ;;
+        --image) image="$2"; shift 2 ;;
+        -h|--help) usage; exit 0 ;;
+        --) shift; break ;;
+        *) echo "darkroom-docker: unknown option $1 (put darkroom's own arguments after --)" >&2; exit 2 ;;
+    esac
+done
+[ -n "$work" ] || { echo "darkroom-docker: --work DIR is required" >&2; exit 2; }
+mkdir -p "$work"
+
+abs() { (cd "$1" && pwd -P); }
+args=(--rm --platform linux/amd64 -v darkroom-cache:/cache -v "$(abs "$work"):/work")
+[ -n "$subs" ]  && args+=(-v "$(abs "$subs"):/subs:ro")
+[ -n "$darks" ] && args+=(-v "$(abs "$darks"):/darks:ro")
+[ -t 0 ] && [ -t 1 ] && args+=(-it)
+# On Linux, write files as you rather than as root. Docker Desktop on macOS maps
+# ownership of bind mounts by itself.
+[ "$(uname -s)" = "Linux" ] && args+=(--user "$(id -u):$(id -g)")
+
+exec docker run "${args[@]}" "$image" "$@"
