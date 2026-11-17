@@ -1,26 +1,44 @@
 # Installing darkroom
 
-darkroom has been tested only on macOS with Apple Silicon.
-
-## What you need first
-
-None of these are bundled. Install each one yourself:
-
-- Python 3.11 or later.
-- [Siril](https://siril.org) 1.4.5. darkroom uses its command-line version, `siril-cli`, which ships inside the app.
-- [GraXpert](https://graxpert.com) 3.1. darkroom uses its denoise model 3.0.2 directly; `darkroom fetch-models` makes GraXpert download it, and `darkroom denoise` does so by itself if it is missing.
-- StarNet2, optional. `darkroom get-starnet` downloads the command-line version for your platform from the official [StarNet site](https://www.starnetastro.com), shows you its licence and installs it only if you accept (see [StarNet](#starnet)). Without StarNet, use the `cluster` look or `darkroom star-reduce`.
+On a Mac, install darkroom natively as below. On Linux or Windows, use the [Docker image](docker.md), which has everything inside. darkroom has been tested on macOS with Apple Silicon; the native installer also knows the Intel Mac and x86-64 Linux builds, but those have not been tried on real machines.
 
 ## Install
+
+You need Python 3.11 or later. Everything else is downloaded for you.
 
 ```sh
 git clone https://github.com/tks98/darkroom.git
 cd darkroom
-bash setup.sh                # add --starnet-dir DIR to include StarNet in the check
+bash setup.sh                # add --starnet-dir DIR if you already have StarNet somewhere
 source .venv/bin/activate    # puts `darkroom` on the PATH
 ```
 
-`setup.sh` creates `.venv`, installs the package into it, builds a copy of the GraXpert denoise model that runs on the Apple GPU (see [why](troubleshooting.md#graxperts-gpu-denoise-fails-on-macos)), and links the agent skill into `~/.claude/skills/darkroom`. Pass `--skill-dir DIR` to link it into another agent's skills folder instead, or `--no-skill` to skip it; see [using darkroom with an AI agent](agents.md). It finishes by running `darkroom doctor`. You can run it again at any time; it only redoes what is missing.
+`setup.sh` creates `.venv`, installs the package into it, builds a copy of the GraXpert denoise model that runs on the Apple GPU (see [why](troubleshooting.md#graxperts-gpu-denoise-fails-on-macos)), links the agent skill into `~/.claude/skills/darkroom` (`--skill-dir DIR` for another agent, `--no-skill` to skip; see [using darkroom with an AI agent](agents.md)), and runs `darkroom setup`, described next. You can run it again at any time; it only redoes what is missing.
+
+## `darkroom setup`
+
+```sh
+darkroom setup
+```
+
+This gets the external tools in place:
+
+1. It looks for [Siril](https://siril.org) 1.4.5 and [GraXpert](https://graxpert.com) 3.1. If you already have working copies (in `/Applications` on a Mac), it uses them and installs nothing. Otherwise it downloads the official build for your platform, checks its size and SHA-256 against values pinned in darkroom, and installs it in darkroom's own tools folder (`~/Library/Application Support/darkroom/tools` on a Mac), leaving the rest of your system alone.
+2. It makes GraXpert download its denoise model (`darkroom fetch-models`).
+3. If no StarNet is found, it offers to install StarNet2 with `darkroom get-starnet`, which shows you StarNet's licence and installs it only if you accept.
+4. It runs `darkroom doctor`.
+
+`--dry-run` shows what it would download and where, without downloading anything. `--force` installs darkroom's own copy even when one is already present; that copy then takes precedence. `--from DIR` installs from official files you already downloaded (still checked against the pinned hashes).
+
+### macOS security checks
+
+A file downloaded by a program rather than a browser is not marked as downloaded, so macOS would never check it. darkroom does not take advantage of that: it marks the apps it installs exactly as a browser would, so macOS's Gatekeeper decides about them as usual.
+
+Siril's Mac build is signed and notarized by Apple, so Gatekeeper accepts it and it just works. GraXpert's Mac build is not notarized. Before installing it, `setup` tells you so and asks you to type `yes` (or pass `--allow-unnotarized`). After that, macOS blocks it until you allow it yourself: run it once, then open System Settings, Privacy & Security, and click Open Anyway. darkroom never lifts that block for you, and `doctor` reports it until you do.
+
+### Where darkroom finds the tools
+
+For Siril and GraXpert: the environment variable (`DARKROOM_SIRIL`, `DARKROOM_GRAXPERT`) if set, then a copy installed by `darkroom setup`, then the standard location (`/Applications` on a Mac).
 
 ## StarNet
 
@@ -56,7 +74,8 @@ darkroom finds the external tools through environment variables. Defaults are th
 | `DARKROOM_GRAXPERT` | the GraXpert executable. Default: inside `/Applications/GraXpert.app` |
 | `DARKROOM_GRAXPERT_MODEL` | the GraXpert denoise model file, if it is not where GraXpert keeps it |
 | `DARKROOM_STARNET_DIR` | a StarNet folder to use instead of the one `get-starnet` installed; `[starnet] dir` and `--starnet-dir` take precedence over it |
-| `DARKROOM_CACHE` | where the GPU copy of the denoise model is built. Default: `~/Library/Caches/darkroom` |
+| `DARKROOM_CACHE` | where the GPU copy of the denoise model is built and where `get-starnet` installs StarNet2. Default: `~/Library/Caches/darkroom` |
+| `DARKROOM_TOOLS_DIR` | where `darkroom setup` installs Siril and GraXpert. Default: `~/Library/Application Support/darkroom/tools` |
 
 ## Running the tests
 

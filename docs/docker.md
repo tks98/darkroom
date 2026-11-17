@@ -1,10 +1,10 @@
 # Running darkroom in Docker
 
-The Docker image runs darkroom on Linux, and on Windows or macOS through Docker Desktop, without installing Siril or GraXpert yourself. It contains darkroom, Siril 1.4.5 and GraXpert 3.1.0rc2 on Debian 13.
+The Docker image is how darkroom is delivered on Linux and Windows: one image with darkroom, Siril 1.4.5 and GraXpert 3.1.0rc2 on Debian 13, at versions known to work together, so you install nothing else. On Windows it runs through Docker Desktop.
 
 StarNet is not in the image. Its licence does not allow it to be redistributed, so you download it once inside the container with `darkroom get-starnet`, which shows you its licence and installs it only if you accept. GraXpert's AI models are also downloaded on first use. Both are kept in a Docker volume, so this happens once.
 
-On a Mac, prefer the [native install](install.md). The image is x86-64 only, because StarNet2 and GraXpert publish Linux builds for x86-64 only, so on Apple Silicon Docker has to emulate it. It also cannot use the Apple GPU, so denoising runs on the CPU. See [Speed](#speed).
+On a Mac, do not use the image: install natively with `darkroom setup` instead (see [Installing](install.md)), which downloads the Mac builds of Siril and GraXpert. The image is x86-64 only, because StarNet2 and GraXpert publish Linux builds for x86-64 only, so on Apple Silicon Docker has to emulate it. There it is about five times slower, cannot use the Apple GPU, and Siril's colour calibration crashes (see below). The image works on an Intel Mac too, but the native install is still faster there.
 
 ## Build the image
 
@@ -34,6 +34,19 @@ Everything after `--` is passed to `darkroom`. Results land in the work folder o
 
 `docker/darkroom-docker --work ~/astro/m31 -- doctor` checks the setup inside the container.
 
+On Windows, the wrapper runs in WSL or Git Bash. From PowerShell, call Docker directly with the same mounts:
+
+```powershell
+docker run --rm -it --platform linux/amd64 `
+  -v darkroom-cache:/cache `
+  -v C:\astro\m31:/work `
+  -v C:\astro\M31_sub:/subs:ro `
+  -v C:\astro\darklibrary:/darks:ro `
+  darkroom run --work /work
+```
+
+Windows support has not been tested yet.
+
 ## StarNet
 
 `darkroom get-starnet` finds the current StarNet2 command-line build for Linux on the official StarNet site, downloads it, prints its full licence, and asks you to type `accept`. Only then does it install it, into the cache volume. It records the version, the download address and when you accepted in an `accepted.json` file next to it. If you do not accept, it deletes the download and installs nothing.
@@ -52,7 +65,7 @@ docker volume rm darkroom-cache
 
 ## Speed
 
-The M31 run (404 subs of 30 s) took these times. The Docker column is the image running under emulation on an Apple Silicon Mac; on a real x86-64 Linux machine it should be several times faster, but that has not been measured.
+The M31 run (404 subs of 30 s) took these times. The image has so far only been run under emulation on an Apple Silicon Mac, which is the slowest way to run it; on a real x86-64 Linux machine it should be several times faster, but that has not been measured yet.
 
 | Stage | Mac, native | Docker, emulated |
 |---|---|---|
@@ -72,7 +85,7 @@ The finished image from the container, made with StarNet2 2.6.2 and CPU denoisin
 
 On an Apple Silicon Mac, Siril's colour calibration (SPCC) crashes inside the container with a segmentation fault, at the photometry step, every time and also with a single thread. Plate solving just before it works. The same step works natively on the Mac, so this looks like a problem with Siril under Docker's x86-64 emulation, but it has not yet been tested on a real x86-64 Linux machine, so a Siril problem on Linux is not ruled out.
 
-Until that is known, run the `color` stage natively on a Mac with darkroom installed, against the same work folder, and continue in the container:
+This is one more reason to install natively on a Mac. If you do run the image there anyway, run the `color` stage with a native darkroom against the same work folder, then continue in the container:
 
 ```sh
 darkroom color --work ~/astro/m31

@@ -28,6 +28,11 @@ anyway, and ask the user to look at them before you move on.
 
 ## Before you start
 
+0. If Siril, GraXpert or the denoise model are missing, `darkroom setup`
+   installs them (on Linux or Windows, use the Docker image instead). It asks
+   before installing GraXpert, whose Mac build Apple has not notarized; that
+   answer, and allowing it to run afterwards, are the user's to give, so never
+   pass `--allow-unnotarized` for them.
 1. Find the repo: this skill's folder is `<repo>/skill`, often reached through
    a symlink in the agent's skills folder, so resolve the link. Use
    `<repo>/.venv/bin/darkroom`.
