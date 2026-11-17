@@ -15,7 +15,7 @@ file from a work directory and writes its own:
 | `color` | Siril plate solve + SPCC colour calibration | `spcc.fit` |
 | `denoise` | GraXpert denoise model on the GPU | `denoised.fits` |
 | `stretch` | Siril arcsinh + autostretch | `stretched.fit/.tif/.jpg` |
-| `starnet` | StarNet v2 star removal | `starless.tif` |
+| `starnet` | StarNet2 star removal | `starless.tif` |
 | `finish` | Python: enhance, shrink stars, recombine, crop | `final.tif/.jpg` |
 
 The tool does the numbers. Your part is looking at the images and deciding
@@ -28,6 +28,11 @@ anyway, and ask the user to look at them before you move on.
 
 ## Before you start
 
+0. If Siril, GraXpert or the denoise model are missing, `darkroom setup`
+   installs them (on Linux or Windows, use the Docker image instead). It asks
+   before installing GraXpert, whose Mac build Apple has not notarized; that
+   answer, and allowing it to run afterwards, are the user's to give, so never
+   pass `--allow-unnotarized` for them.
 1. Find the repo: this skill's folder is `<repo>/skill`, often reached through
    a symlink in the agent's skills folder, so resolve the link. Use
    `<repo>/.venv/bin/darkroom`.
@@ -215,13 +220,29 @@ output. If both servers are down, wait: do not skip colour calibration.
 darkroom passes absolute paths. If you write a Siril script by hand, do the
 same.
 
-### StarNet is blocked by Gatekeeper
+### StarNet is not installed
 
-The macOS StarNet CLI is an unsigned binary. `doctor` reports the quarantine
-flag and the command that clears it (`xattr -dr com.apple.quarantine
-<folder>`). That is a security decision: explain it and let the user run the
-command. Do not run it yourself. Until then, `darkroom star-reduce` is a
-weaker fallback that needs no StarNet.
+`darkroom get-starnet` downloads StarNet2 from its official site and installs
+it after the user accepts its licence. The acceptance must be the user's own:
+show them that the licence will be printed and that they must type `accept`,
+and never pass `--accept-license` for them. Until then, the `cluster` look and
+`darkroom star-reduce` work without StarNet.
+
+### StarNet v2.0.2 is blocked by Gatekeeper
+
+The old macOS StarNet v2.0.2 is an unsigned binary. `doctor` reports the
+quarantine flag and the command that clears it (`xattr -dr
+com.apple.quarantine <folder>`). That is a security decision: explain it and
+let the user run the command. Do not run it yourself. StarNet2 2.6 from
+`get-starnet` is signed and avoids this.
+
+### Running in Docker
+
+`docker/darkroom-docker` runs the Linux image with the user's folders at
+`/subs`, `/darks` and `/work`; use those paths inside the container. Under
+emulation on Apple Silicon, Siril's colour calibration (SPCC) crashes; run
+the `color` stage natively there, or use the image on an x86-64 machine. See
+`docs/docker.md`.
 
 ### Shell is often zsh
 

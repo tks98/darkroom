@@ -34,7 +34,7 @@ A stage that is already up to date is skipped, so changing a finishing setting a
 
 ## Quick start
 
-You need macOS on Apple Silicon, Python 3.11, [Siril](https://siril.org) 1.4.5, [GraXpert](https://graxpert.com) 3.1 and, for the galaxy workflow, the [StarNet v2](https://www.starnetastro.com) command-line version.
+On a Mac you need Python 3.11 or later. `setup.sh` installs darkroom and then runs `darkroom setup`, which downloads [Siril](https://siril.org) and [GraXpert](https://graxpert.com) from their official releases if you do not have them, fetches GraXpert's denoise model, and offers to install [StarNet2](https://www.starnetastro.com) after you accept its licence. On Linux or Windows, use the [Docker image](docs/docker.md) instead.
 
 ```sh
 git clone https://github.com/tks98/darkroom.git
@@ -46,11 +46,12 @@ darkroom init --work m31 --subs path/to/lights --dark-library path/to/darklibrar
 darkroom run  --work m31
 ```
 
-`setup.sh` installs darkroom and ends by running `darkroom doctor`, which checks every tool and prints a fix for anything missing. `init` reads the FITS headers, picks a master dark and writes a `darkroom.toml` you can edit. `run` does the rest. The first time, it is worth going one stage at a time with `--to STAGE` and looking at each result.
+Setup ends with `darkroom doctor`, which checks every tool and prints a fix for anything missing. `init` reads the FITS headers, picks a master dark and writes a `darkroom.toml` you can edit. `run` does the rest. The first time, it is worth going one stage at a time with `--to STAGE` and looking at each result.
 
 ## Documentation
 
 - [Installing](docs/install.md): requirements, `setup.sh`, `darkroom doctor`, environment variables, tests.
+- [Running darkroom in Docker](docs/docker.md): the Linux image, for Linux, Windows or anywhere you would rather not install Siril and GraXpert.
 - [Using darkroom](docs/usage.md): `init` and `run`, single stages, what to check after each stage, comparing variants, disk space.
 - [Configuration](docs/configuration.md): every setting with its default, dark selection, framing, star reduction, cropping, and the galaxy and cluster looks.
 - [How it works](docs/pipeline.md): what each stage does, with numbers from M31.

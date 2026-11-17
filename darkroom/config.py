@@ -54,7 +54,7 @@ SCHEMA: dict[str, dict[str, tuple[str, object, str]]] = {
     },
     "denoise": {
         "strength": ("float", 0.6, "denoise strength 0..1"),
-        "cpu": ("bool", False, "run on the CPU instead of CoreML"),
+        "cpu": ("bool", False, "run on the CPU instead of the GPU (CoreML on macOS, CUDA if available)"),
     },
     "stretch": {
         "asinh": ("float", 25.0, "asinh -human stretch factor"),
@@ -63,7 +63,7 @@ SCHEMA: dict[str, dict[str, tuple[str, object, str]]] = {
         "sat": ("float", 0.35, "Siril satu amount"),
     },
     "starnet": {
-        "dir": ("path", None, "folder containing starnet++ (else $DARKROOM_STARNET_DIR)"),
+        "dir": ("path", None, "folder containing starnet2 or starnet++ (else $DARKROOM_STARNET_DIR, then `darkroom get-starnet`'s install)"),
     },
     "finish": {
         "gamma": ("float", _F.gamma, ">1 dims star halos more than cores (smaller stars)"),

@@ -33,3 +33,15 @@ M13, a globular cluster: 18 subs of 30 seconds from 2026-08-27, cut short by clo
 The neutralisation fix also changes M31's final image slightly, by at most 0.0014 (a third of one 8-bit level); every stage before `finish` is unchanged. The M31 images in the README were made before the fix.
 
 Phase 5 also added the `keep_bkg` and `keep_stars` frame filters. They did not help on M13: see [frame selection](configuration.md#frame-selection).
+
+## After phase 5: StarNet2 2.6 and Docker
+
+StarNet2 2.6.2 came out with a native, signed Apple Silicon build, a new command line and a new licence. Its licence lets other programs run the StarNet command line, as long as the user downloads it from the official site and accepts the terms themselves, and it forbids redistributing it. That shaped two additions: `darkroom get-starnet`, which downloads StarNet2, shows its licence and installs it only after the user accepts, and a Docker image that contains Siril and GraXpert but leaves StarNet to `get-starnet`.
+
+On M31, StarNet2 2.6.2 gave the same starless image as StarNet v2.0.2 to within 0.01 of an 8-bit level, in about 10 seconds instead of 50 to 75.
+
+An open-source alternative, starrem2k13 (MIT), was also tried on the same image and rejected: it left a ring where nearly every star had been, coloured halos, and a visible seam where its tiles meet.
+
+The full M31 run was repeated in the Docker image under emulation on Apple Silicon. Siril's colour calibration crashed there (see [Docker](docker.md#colour-calibration-crashes-under-emulation)), so that stage ran natively; every other stage ran in the container. The result matched the native one to 0.04 of an 8-bit level on average. Two things turned up along the way: Siril on Linux will not `cd` into a read-only folder, so `stack` now links the subs into the work folder when needed, and Siril's AppImage only finds its Python module when `APPDIR` is set.
+
+After that, the image's role was narrowed. Running the Mac pipeline inside Docker is slow and loses the GPU, so the image became the way darkroom is delivered on Linux and Windows, and a native installer, `darkroom setup`, took over on the Mac: it downloads the official Siril and GraXpert builds, checks them against pinned hashes, and marks them for Gatekeeper the way a browser would. Siril's Mac build is notarized; GraXpert's is not, so `setup` asks before installing it and leaves the decision to allow it with the user.

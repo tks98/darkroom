@@ -7,25 +7,47 @@ import time
 from collections import namedtuple
 from pathlib import Path
 
-from . import __version__, config, doctor, stages, tools
+from . import __version__, config, doctor, get_starnet, installer, stages, tools, toolset
 from .finish import FinishParams, parse_aspect, parse_center, parse_crop
 
-ENV_HELP = """\
+def env_help() -> str:
+    """The settings/environment epilog, showing this platform's actual defaults."""
+    return f"""\
 settings:
   A flag given on the command line wins. Anything not given comes from
   <work>/darkroom.toml (see `darkroom init`), then the look preset, then the
   camera preset, then the built-in default shown above.
 
-environment:
-  DARKROOM_SIRIL            siril-cli (default /Applications/Siril.app/Contents/MacOS/siril-cli)
-  DARKROOM_GRAXPERT         GraXpert (default /Applications/GraXpert.app/Contents/MacOS/GraXpert)
-  DARKROOM_GRAXPERT_MODEL   GraXpert 3.0.2 denoise model
-                            (default ~/Library/Application Support/GraXpert/denoise-ai-models/3.0.2/model.onnx)
-  DARKROOM_CACHE            cache for the fixed-batch denoise model (default ~/Library/Caches/darkroom)
-  DARKROOM_STARNET_DIR      folder containing starnet++ and its weights (no default)
+environment (defaults for this platform, {"macOS" if tools.is_macos() else "Linux"}):
+  DARKROOM_SIRIL            siril-cli (default: the one `darkroom setup` installed, else
+                            {tools.default_siril()})
+  DARKROOM_GRAXPERT         GraXpert (default: the one `darkroom setup` installed, else
+                            {tools.default_graxpert()})
+  DARKROOM_TOOLS_DIR        where `darkroom setup` installs Siril and GraXpert
+                            (default {toolset.default_tools_dir()})
+  DARKROOM_GRAXPERT_MODEL   GraXpert 3.0.2 denoise model; `darkroom fetch-models` downloads it
+                            (default {tools.default_graxpert_model()})
+  DARKROOM_CACHE            cache for the fixed-batch denoise model and StarNet2 installed by
+                            `darkroom get-starnet` (default {tools.default_cache()})
+  DARKROOM_STARNET_DIR      folder containing starnet2 (StarNet2 2.6) or starnet++ (StarNet v2.0.2);
+                            used when neither --starnet-dir nor [starnet] dir is set
+                            (default: the newest StarNet2 installed by `darkroom get-starnet`)
   DARKROOM_SIRIL_CACHE      write fallback star catalogues here instead of the folder named in
                             Siril's log (for testing)
 """
+
+
+FETCH_MODELS_EPILOG = """\
+GraXpert downloads its AI models itself the first time it needs them. The
+background-extraction model arrives on the first `darkroom bge`. The denoise
+model (3.0.2) only arrives when GraXpert's own denoise runs, which darkroom
+otherwise never does, so this runs it once on a tiny synthetic image in a
+temporary folder and then checks that the model file exists. `darkroom denoise`
+does the same by itself when the model is missing.
+
+environment: DARKROOM_GRAXPERT, DARKROOM_GRAXPERT_MODEL (see `darkroom --help`)
+"""
+
 
 Aspect = namedtuple("Aspect", "w h")
 
@@ -108,8 +130,8 @@ class _Fmt(argparse.RawDescriptionHelpFormatter):
         return h
 
 
-def _sub(sp, name, help_, epilog=ENV_HELP):
-    p = sp.add_parser(name, help=help_, description=help_, epilog=epilog, formatter_class=_Fmt)
+def _sub(sp, name, help_, epilog=None):
+    p = sp.add_parser(name, help=help_, description=help_, epilog=epilog or env_help(), formatter_class=_Fmt)
     return p, _Opts(p)
 
 
@@ -173,7 +195,7 @@ def _color_args(o):
 
 def _denoise_args(o):
     o.add("--strength", type=float, default=0.6, key=("denoise", "strength"), help="denoise strength 0..1")
-    o.add("--cpu", action="store_true", key=("denoise", "cpu"), help="run on CPU instead of CoreML")
+    o.add("--cpu", action="store_true", key=("denoise", "cpu"), help="run on the CPU instead of the GPU (CoreML on macOS, CUDA if onnxruntime has it)")
 
 
 def _stretch_args(o):
@@ -186,7 +208,9 @@ def _stretch_args(o):
 
 def _starnet_args(o):
     o.add("--starnet-dir", metavar="DIR", default=None, key=("starnet", "dir"),
-          help="folder containing starnet++ (default: [starnet] dir, then $DARKROOM_STARNET_DIR)")
+          help="folder containing starnet2 (StarNet2 2.6) or starnet++ (StarNet v2.0.2); if both, starnet2 "
+               "is used (default: [starnet] dir, then $DARKROOM_STARNET_DIR, then the newest StarNet2 "
+               "installed by `darkroom get-starnet`)")
 
 
 def _finish_args(o):
@@ -249,7 +273,7 @@ written.
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="darkroom", description="Astrophotography pipeline: stack, background "
                                  "extraction, colour calibration, denoise, stretch, star removal, finish.",
-                                 epilog=ENV_HELP, formatter_class=_Fmt)
+                                 epilog=env_help(), formatter_class=_Fmt)
     ap.add_argument("--version", action="version", version=f"darkroom {__version__}")
     sp = ap.add_subparsers(dest="cmd", required=True, metavar="COMMAND")
 
@@ -283,7 +307,7 @@ def build_parser() -> argparse.ArgumentParser:
     p, o = _sub(sp, "stretch", "Siril asinh + autostretch + saturation: denoised.fits -> stretched.fit, stretched.tif")
     _work(o); _stretch_args(o)
 
-    p, o = _sub(sp, "starnet", "StarNet v2 star removal: stretched.tif -> starless.tif")
+    p, o = _sub(sp, "starnet", "StarNet star removal (StarNet2 2.6 or StarNet v2.0.2): stretched.tif -> starless.tif")
     _work(o); _starnet_args(o)
 
     p, o = _sub(sp, "finish", "recombine starless + reduced stars, polish, crop: -> final.tif, final.jpg")
@@ -297,7 +321,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--to", choices=stages.STAGES, default=stages.STAGES[-1], metavar="STAGE", help="last stage")
     p.add_argument("--force", action="store_true", help="re-run every stage, up to date or not")
     _starnet_args(o)
-    o.add("--cpu", action="store_true", key=("denoise", "cpu"), help="denoise on CPU instead of CoreML")
+    o.add("--cpu", action="store_true", key=("denoise", "cpu"), help="denoise on the CPU instead of the GPU (CoreML on macOS, CUDA if onnxruntime has it)")
     _crop_arg(o)
 
     p, o = _sub(sp, "star-reduce", "morphological star reduction on a stretched RGB FITS (non-StarNet fallback)")
@@ -309,7 +333,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--k", type=float, default=4.0, help="detection threshold in noise sigmas")
     p.add_argument("--mask", type=Path, default=None, help="optionally save the star mask here")
     doctor.add_parser(sp)
+    get_starnet.add_parser(sp)
+    installer.add_parser(sp)
+    p = sp.add_parser("fetch-models", help="make GraXpert download its AI denoise model 3.0.2",
+                      description="make GraXpert download its AI denoise model 3.0.2",
+                      epilog=FETCH_MODELS_EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.set_defaults(func=_fetch_models)
     return ap
+
+
+def _fetch_models(a) -> int:
+    from . import models
+    models.fetch_denoise_model()
+    return 0
 
 
 # ---------------------------------------------------------------- settings
@@ -400,6 +436,8 @@ def _call(stage: str, work: Path, s: config.Settings, table: dict | None = None,
 
 
 def _params(stage: str, s: config.Settings, table: dict | None = None) -> dict:
+    if stage == "starnet":
+        return stages.result_params(stage, s[stage]) | stages.starnet_params(_starnet_dir(s))
     return stages.result_params(stage, table if stage == "stack" else s[stage])
 
 
@@ -644,6 +682,8 @@ def main(argv=None) -> int:
     if a.cmd == "doctor":  # reports only: no work dir is created, and its exit code is the result
         return a.func(a)
     try:
+        if a.cmd in ("get-starnet", "fetch-models", "setup"):
+            return a.func(a)
         _dispatch(a)
     except tools.StageError as e:
         tools.eprint(f"darkroom {a.cmd}: error: {e}")

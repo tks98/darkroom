@@ -5,8 +5,10 @@ the outside world goes through ``run_cmd`` (subprocess), ``http_get`` (urllib)
 or plain filesystem calls on paths passed in, so the tests can replace them.
 
 Doctor only reports. Apart from building the cached fixed-batch denoise model on
-first use, it never changes files, settings or quarantine flags, and
-it never executes StarNet when macOS has it quarantined.
+first use, it never changes files, settings or quarantine flags, it never executes
+StarNet when macOS has it quarantined, and it never executes a quarantined Siril or
+GraXpert that Gatekeeper would block (not notarized and not yet allowed by the user). On Linux the macOS-only
+checks (quarantine flag, Rosetta, executable architecture) are skipped.
 """
 from __future__ import annotations
 
@@ -33,7 +35,7 @@ from . import tools
 
 OK, WARN, FAIL = "OK", "WARN", "FAIL"
 
-DEPS = ["numpy", "scipy", "astropy", "tifffile", "PIL", "onnx", "onnxruntime"]
+DEPS = ["numpy", "scipy", "astropy", "tifffile", "imagecodecs", "PIL", "onnx", "onnxruntime"]
 MIN_PYTHON = (3, 11)
 
 SIRIL_MIN = (1, 4, 0)
@@ -42,6 +44,10 @@ MODEL_VERSION = "3.0.2"
 
 STARNET_EXE = "starnet++"
 STARNET_WEIGHTS = "starnet2_weights.pb"
+STARNET2_EXE = "starnet2"
+STARNET2_WEIGHTS = ("StarNet2_weights.mlpackage", "StarNet2_weights.onnx")
+STARNET2_VERIFIED = "2.6"
+STARNET2_GLIBC = (2, 38)
 STARNET_SAMPLE = "rgb_test.tif"
 QUARANTINE = "com.apple.quarantine"
 
@@ -105,6 +111,48 @@ def _short_err(e: BaseException) -> str:
     return str(e) or type(e).__name__
 
 
+# ---------------------------------------------------------------- 0. system
+
+CONTAINER_MARKERS = (Path("/.dockerenv"), Path("/run/.containerenv"))
+
+
+def glibc_version(libc_ver: Callable = None) -> tuple[int, ...] | None:
+    import platform
+    name, ver = (libc_ver or platform.libc_ver)()
+    if name != "glibc" or not ver:
+        return None
+    try:
+        return tuple(int(x) for x in ver.split("."))
+    except ValueError:
+        return None
+
+
+def in_container(markers=CONTAINER_MARKERS) -> bool:
+    return any(m.exists() for m in markers)
+
+
+def check_system(system: str | None = None, machine: str | None = None, glibc: Callable = glibc_version,
+                 container: Callable = in_container, mac_ver: Callable | None = None) -> Result:
+    import platform
+    system = sys.platform if system is None else system
+    machine = platform.machine() if machine is None else machine
+    name = "system"
+    box = ", inside a container" if container() else ""
+    if system == "darwin":
+        v = (mac_ver or platform.mac_ver)()[0]
+        return Result(name, OK, f"macOS {v} {machine}{box}")
+    if system.startswith("linux"):
+        g = glibc()
+        gs = ".".join(map(str, g)) if g else "unknown"
+        detail = f"Linux {machine}, glibc {gs}{box}"
+        if g is not None and g < STARNET2_GLIBC:
+            return Result(name, WARN, detail + "; the StarNet2 Linux build needs glibc 2.38 or newer",
+                          "use a newer distribution (the darkroom Docker image has one), or StarNet will not run")
+        return Result(name, OK, detail)
+    return Result(name, WARN, f"{system} {machine}: darkroom is made for macOS and Linux",
+                  "expect the tool defaults to be wrong; set the DARKROOM_* variables")
+
+
 # ---------------------------------------------------------------- 1. python
 
 def pinned_onnxruntime() -> str | None:
@@ -164,12 +212,44 @@ def parse_siril_version(text: str) -> tuple[int, int, int] | None:
     return None
 
 
-def check_siril(path: Path | None = None, run: Callable = run_cmd) -> Result:
+def _resolved(tool: str, path: Path | None) -> tuple[Path, str]:
+    if path is not None:
+        return path, ""
+    exe, source = tools.resolve_tool(tool)
+    return exe, f" ({source})"
+
+
+def _gatekeeper(name: str, exe: Path, run: Callable, system: str | None) -> tuple[Result | None, str]:
+    """macOS: (FAIL result, "") when exe is quarantined and Gatekeeper would block it (it is then
+    not executed); else (None, note) where note mentions a quarantine that Gatekeeper accepts."""
+    from . import toolset
+    system = sys.platform if system is None else system
+    if system != "darwin":
+        return None, ""
+    value = toolset.quarantine_value(exe, run)
+    if value is None:
+        return None, ""
+    if toolset.user_approved(value):
+        return None, "; quarantined, allowed by you"
+    target = toolset.bundle_of(exe)
+    ok, source = toolset.assess(target, run)
+    if ok:
+        return None, f"; quarantined, accepted by Gatekeeper: {source}"
+    return Result(name, FAIL, f"{exe}: quarantined by macOS and not notarized ({source or 'rejected by Gatekeeper'}); "
+                  "Gatekeeper will block it; doctor did not execute it", toolset.allow_instructions(target)), ""
+
+
+def check_siril(path: Path | None = None, run: Callable = run_cmd, system: str | None = None) -> Result:
     name = "siril"
-    exe = path or tools.siril_cli()
-    fix_install = "install Siril 1.4.x from siril.org, or set DARKROOM_SIRIL to its siril-cli"
+    exe, source = _resolved("siril", path)
+    fix_install = ("run `darkroom setup`, install Siril 1.4.x from siril.org, or set DARKROOM_SIRIL to its "
+                   "siril-cli")
     if not _is_exec(exe):
-        return Result(name, FAIL, f"{exe} is not an executable", fix_install)
+        return Result(name, FAIL, f"{exe} is not an executable{source}", fix_install)
+    blocked, note = _gatekeeper(name, exe, run, system)
+    if blocked:
+        return blocked
+    source = source[:-1] + note + ")" if source else (f" ({note[2:]})" if note else "")
     try:
         rc, out = run([str(exe), "--version"], timeout=20)
     except subprocess.TimeoutExpired:
@@ -182,11 +262,11 @@ def check_siril(path: Path | None = None, run: Callable = run_cmd) -> Result:
                       "check that DARKROOM_SIRIL points to siril-cli, not another program")
     vs = ".".join(map(str, v))
     if v < SIRIL_MIN:
-        return Result(name, FAIL, f"Siril {vs} at {exe}; darkroom needs 1.4.x", fix_install)
+        return Result(name, FAIL, f"Siril {vs} at {exe}{source}; darkroom needs 1.4.x", fix_install)
     if v[:2] != (1, 4):
-        return Result(name, WARN, f"Siril {vs} at {exe}; darkroom was verified with 1.4.x",
+        return Result(name, WARN, f"Siril {vs} at {exe}{source}; darkroom was verified with 1.4.x",
                       "the Siril scripts may need changes for this version; 1.4.x is known to work")
-    return Result(name, OK, f"Siril {vs} at {exe}")
+    return Result(name, OK, f"Siril {vs} at {exe}{source}")
 
 
 # ---------------------------------------------------------------- 3. graxpert
@@ -196,12 +276,18 @@ def parse_graxpert_version(text: str) -> str | None:
     return m.group(1) if m else None
 
 
-def check_graxpert(path: Path | None = None, run: Callable = run_cmd, timeout: float = 15.0) -> Result:
+def check_graxpert(path: Path | None = None, run: Callable = run_cmd, timeout: float = 15.0,
+                   system: str | None = None) -> Result:
     name = "graxpert"
-    exe = path or tools.graxpert()
-    fix_install = "install GraXpert 3.1 from graxpert.com, or set DARKROOM_GRAXPERT to its executable"
+    exe, source = _resolved("graxpert", path)
+    fix_install = ("run `darkroom setup`, install GraXpert 3.1 from graxpert.com, or set DARKROOM_GRAXPERT to "
+                   "its executable")
     if not _is_exec(exe):
-        return Result(name, FAIL, f"{exe} is not an executable", fix_install)
+        return Result(name, FAIL, f"{exe} is not an executable{source}", fix_install)
+    blocked, note = _gatekeeper(name, exe, run, system)
+    if blocked:
+        return blocked
+    source = source[:-1] + note + ")" if source else (f" ({note[2:]})" if note else "")
     out, rc = "", None
     for flag in ("-v", "--version"):
         try:
@@ -214,16 +300,16 @@ def check_graxpert(path: Path | None = None, run: Callable = run_cmd, timeout: f
         v = parse_graxpert_version(out)
         if v:
             if not v.startswith(GRAXPERT_VERIFIED):
-                return Result(name, WARN, f"GraXpert {v} at {exe}; verified with {GRAXPERT_VERIFIED}.x",
+                return Result(name, WARN, f"GraXpert {v} at {exe}{source}; verified with {GRAXPERT_VERIFIED}.x",
                               "background extraction may behave differently; 3.1 is known to work")
-            return Result(name, OK, f"GraXpert {v} at {exe}")
+            return Result(name, OK, f"GraXpert {v} at {exe}{source}")
     return Result(name, WARN, f"{exe}: could not parse version (exit {rc})",
                   "check that DARKROOM_GRAXPERT points to the GraXpert executable")
 
 
 # ---------------------------------------------------------------- 4. model
 
-MODEL_FIX = (f"open GraXpert, run Denoising once with AI model {MODEL_VERSION} so it downloads the model, "
+MODEL_FIX = (f"run `darkroom fetch-models` (GraXpert downloads AI model {MODEL_VERSION}), "
              "or set DARKROOM_GRAXPERT_MODEL to the model.onnx file")
 
 
@@ -237,17 +323,19 @@ def check_model(path: Path | None = None) -> Result:
 # ---------------------------------------------------------------- 5. gpu denoise
 
 def _coreml_providers():
-    # Same provider list as darkroom.denoise.run (GPU path).
-    return [("CoreMLExecutionProvider", {"ModelFormat": "MLProgram", "MLComputeUnits": "ALL"}),
-            "CPUExecutionProvider"]
+    # Same provider list as darkroom.denoise.run (GPU path on macOS).
+    from . import denoise as dn
+    return [dn.COREML, "CPUExecutionProvider"]
 
 
-def check_gpu(model_path: Path | None = None, ort=None, build: Callable | None = None) -> Result:
-    """Run one batch on CoreML and on CPU; compare speed and output."""
+def check_gpu(model_path: Path | None = None, ort=None, build: Callable | None = None,
+              system: str | None = None) -> Result:
+    """Run one batch on the GPU backend denoise would use and on the CPU; compare speed and output."""
     name = "gpu denoise"
     import numpy as np
     from . import denoise as dn
 
+    system = sys.platform if system is None else system
     src = model_path or tools.graxpert_model()
     if not src.is_file():
         return Result(name, FAIL, "not run: GraXpert denoise model missing", MODEL_FIX)
@@ -257,6 +345,11 @@ def check_gpu(model_path: Path | None = None, ort=None, build: Callable | None =
         ort.set_default_logger_severity(3)
     except Exception:
         pass
+    try:
+        available = ort.get_available_providers()
+    except Exception:
+        available = []
+    providers, backend = dn.providers(False, available, system)
     if build is None:
         def build():
             tools.cache_dir().mkdir(parents=True, exist_ok=True)
@@ -276,18 +369,6 @@ def check_gpu(model_path: Path | None = None, ort=None, build: Callable | None =
     x = np.random.default_rng(0).random((dn.BATCH, dn.WIN, dn.WIN, 3), dtype=np.float32)
     feed = {"gen_input_image": x}
     try:
-        t = time.time()
-        gpu = session(_coreml_providers())
-        load = time.time() - t
-        gpu.run(None, feed)                      # warm-up (first call compiles)
-        t = time.time()
-        y_gpu = gpu.run(None, feed)[0]
-        t_gpu = time.time() - t
-    except Exception as e:
-        return Result(name, FAIL, f"CoreML session failed: {str(e).splitlines()[0][:200]}",
-                      "use `darkroom denoise --cpu` (about 20x slower) and report the error")
-    used = gpu.get_providers()
-    try:
         cpu = session(["CPUExecutionProvider"])
         t = time.time()
         y_cpu = cpu.run(None, feed)[0]
@@ -295,20 +376,41 @@ def check_gpu(model_path: Path | None = None, ort=None, build: Callable | None =
     except Exception as e:
         return Result(name, FAIL, f"CPU session failed: {str(e).splitlines()[0][:200]}",
                       "reinstall onnxruntime in the venv (./setup.sh)")
+    if backend == "CPU":
+        detail = f"CPU only (onnxruntime providers: {', '.join(available) or 'none'}); batch of {dn.BATCH}: {t_cpu:.2f}s"
+        if system == "darwin":
+            return Result(name, WARN, detail + " (no CoreML provider)",
+                          "onnxruntime has no CoreML provider here; denoise will work but slowly "
+                          "(install the pinned onnxruntime on Apple Silicon macOS)")
+        return Result(name, WARN, detail + "; denoise will be slow",
+                      "for an NVIDIA GPU, install onnxruntime-gpu with CUDA (and pass the GPU to the container); "
+                      "on the CPU denoise still works")
+    try:
+        t = time.time()
+        gpu = session(providers)
+        load = time.time() - t
+        gpu.run(None, feed)                      # warm-up (first call compiles)
+        t = time.time()
+        y_gpu = gpu.run(None, feed)[0]
+        t_gpu = time.time() - t
+    except Exception as e:
+        return Result(name, FAIL, f"{backend} session failed: {str(e).splitlines()[0][:200]}",
+                      "use `darkroom denoise --cpu` (much slower) and report the error")
+    used = gpu.get_providers()
     diff = float(np.max(np.abs(y_gpu.astype(np.float64) - y_cpu)))
     short = [p.replace("ExecutionProvider", "") for p in used]
     detail = (f"providers {'+'.join(short)}; batch of {dn.BATCH}: {t_gpu:.2f}s vs CPU {t_cpu:.2f}s; "
               f"maxdiff {diff:.3f}; load {load:.1f}s")
-    if "CoreMLExecutionProvider" not in used:
+    wanted = providers[0][0] if isinstance(providers[0], tuple) else providers[0]
+    if wanted not in used:
         return Result(name, WARN, detail + " (fell back to CPU)",
-                      "onnxruntime has no CoreML provider here; denoise will work but slowly "
-                      "(install the pinned onnxruntime on Apple Silicon macOS)")
+                      f"onnxruntime could not use {backend} here; denoise will work but slowly")
     if not diff < 0.05:
         return Result(name, FAIL, detail + " (GPU output differs from CPU)",
                       "use `darkroom denoise --cpu` until this is understood")
     if t_gpu > 0.5 * t_cpu:
         return Result(name, WARN, detail + " (GPU not clearly faster)",
-                      "CoreML may be running most of the model on the CPU; `--cpu` gives the same result")
+                      f"{backend} may be running most of the model on the CPU; `--cpu` gives the same result")
     return Result(name, OK, detail)
 
 
@@ -322,29 +424,8 @@ def is_quarantined(p: Path, run: Callable = run_cmd) -> bool:
     return rc == 0
 
 
-def check_starnet(flag: str | None = None, run_sample: bool = False, run: Callable = run_cmd,
-                  env: dict | None = None) -> Result:
-    name = "starnet"
-    env = os.environ if env is None else env
-    d = flag or env.get("DARKROOM_STARNET_DIR")
-    if not d:
-        return Result(name, WARN, "not configured (DARKROOM_STARNET_DIR / --starnet-dir unset)",
-                      "set DARKROOM_STARNET_DIR to the StarNet v2 CLI folder; without it use the weaker "
-                      "`darkroom star-reduce`")
-    folder = Path(d).expanduser().resolve()
-    exe = folder / STARNET_EXE
-    if not folder.is_dir():
-        return Result(name, FAIL, f"{folder} is not a directory",
-                      "point DARKROOM_STARNET_DIR / --starnet-dir at the StarNet v2 CLI folder")
-    if not _is_exec(exe):
-        what = "not executable" if exe.is_file() else "missing"
-        return Result(name, FAIL, f"{exe} {what}",
-                      f"chmod +x '{exe}'" if exe.is_file() else
-                      "download the StarNet v2 command-line version for macOS into that folder")
-    if not (folder / STARNET_WEIGHTS).is_file():
-        return Result(name, FAIL, f"{STARNET_WEIGHTS} missing in {folder}",
-                      "the weights file ships with the StarNet CLI download; put it next to starnet++")
-    notes = []
+def _arch_check(exe: Path, run: Callable) -> tuple[Result | None, list[str]]:
+    """macOS only: an x86_64-only executable needs a working Rosetta 2."""
     try:
         _, ftype = run(["file", "-b", str(exe)], timeout=5)
     except (OSError, subprocess.TimeoutExpired):
@@ -355,17 +436,146 @@ def check_starnet(flag: str | None = None, run_sample: bool = False, run: Callab
         except (OSError, subprocess.TimeoutExpired):
             rc = 1
         if rc != 0:
-            return Result(name, FAIL, f"{exe} is x86_64 and Rosetta 2 does not work",
-                          "install Rosetta 2: softwareupdate --install-rosetta")
-        notes.append("x86_64 via Rosetta")
-    flagged = [p.name for p in [exe, *sorted(folder.glob("*.dylib"))] if is_quarantined(p, run)]
+            return Result("starnet", FAIL, f"{exe} is x86_64 and Rosetta 2 does not work",
+                          "install Rosetta 2: softwareupdate --install-rosetta"), []
+        return None, ["x86_64 via Rosetta"]
+    return None, []
+
+
+def _quarantine_check(folder: Path, files: list[Path], run: Callable) -> Result | None:
+    flagged = [str(p.relative_to(folder)) for p in files if is_quarantined(p, run)]
     if flagged:
-        return Result(name, FAIL,
+        return Result("starnet", FAIL,
                       f"quarantined by macOS ({', '.join(flagged)}); Gatekeeper will block it; doctor did not execute it",
                       f"allowing it is your decision; this clears the flag for the folder: "
                       f"xattr -dr {QUARANTINE} '{folder}'")
+    return None
+
+
+def parse_machine_info(text: str) -> dict | None:
+    """The JSON object `starnet2 --machine-info` prints (possibly among other lines)."""
+    a, b = text.find("{"), text.rfind("}")
+    if a < 0 or b <= a:
+        return None
+    try:
+        data = json.loads(text[a:b + 1])
+    except ValueError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _find_backend(info) -> str | None:
+    """Backend id from the machine-info JSON, wherever it sits (the key names are not documented)."""
+    if isinstance(info, dict):
+        for k, v in info.items():
+            if any(w in k.lower() for w in ("backend", "provider", "engine")) and isinstance(v, (str, int, float)):
+                return str(v)
+        for v in info.values():
+            r = _find_backend(v)
+            if r:
+                return r
+    elif isinstance(info, list):
+        for v in info:
+            r = _find_backend(v)
+            if r:
+                return r
+    return None
+
+
+def _check_starnet2(folder: Path, where: str, run_sample: bool, run: Callable, system: str) -> Result:
+    name = "starnet"
+    exe = folder / STARNET2_EXE
+    if not _is_exec(exe):
+        return Result(name, FAIL, f"{exe} not executable", f"chmod +x '{exe}'")
+    if not any((folder / w).exists() for w in STARNET2_WEIGHTS):
+        return Result(name, FAIL, f"StarNet2 weights ({' or '.join(STARNET2_WEIGHTS)}) missing in {folder}",
+                      "the weights ship with the StarNet2 command-line package; reinstall it "
+                      "(`darkroom get-starnet --force`)")
+    notes = [where] if where else []
+    if system == "darwin":
+        bad, more = _arch_check(exe, run)
+        if bad:
+            return bad
+        notes += more
+        libs = sorted(folder.glob("*.dylib")) + sorted((folder / "lib").glob("*.dylib"))
+        bad = _quarantine_check(folder, [exe, *libs], run)
+        if bad:
+            return bad
+    glibc_fix = ""
+    if system.startswith("linux"):
+        g = glibc_version()
+        glibc_fix = (" The Linux build needs glibc 2.38 or newer (this system has "
+                     f"{'.'.join(map(str, g)) if g else 'an unknown glibc'}).")
+    fix = f"run ./starnet2 --machine-info in {folder} to see the full error." + glibc_fix
+    try:
+        rc, out = run(["./" + STARNET2_EXE, "--machine-info"], timeout=60, cwd=folder)
+    except subprocess.TimeoutExpired:
+        return Result(name, FAIL, "starnet2 --machine-info did not answer within 60 s", fix)
+    except OSError as e:
+        return Result(name, FAIL, f"cannot run {exe}: {e}", fix)
+    info = parse_machine_info(out)
+    if rc != 0 or info is None:
+        last = out.strip().splitlines()[-1][:160] if out.strip() else "no output"
+        return Result(name, FAIL, f"starnet2 --machine-info failed (exit {rc}): {last}", fix)
+    version, build = str(info.get("version", "?")), info.get("build")
+    backend = _find_backend(info)
+    detail = (f"StarNet2 {version}" + (f" build {build}" if build else "") + (f", backend {backend}" if backend else "")
+              + f" at {folder}")
+    if run_sample:
+        notes.append("--run-starnet only test-runs StarNet v2.0.2; StarNet2 was checked with --machine-info")
+    if notes:
+        detail += f" ({'; '.join(notes)})"
+    if info.get("product") not in (None, "starnet2"):
+        return Result(name, WARN, detail + f"; product {info.get('product')!r} is not starnet2",
+                      "point --starnet-dir at a StarNet2 command-line folder")
+    if not version.startswith(STARNET2_VERIFIED + "."):
+        return Result(name, WARN, detail + f"; darkroom was verified with StarNet2 {STARNET2_VERIFIED}.x",
+                      "it will probably work; compare a result with an earlier one")
+    return Result(name, OK, detail)
+
+
+def check_starnet(flag: str | None = None, run_sample: bool = False, run: Callable = run_cmd,
+                  env: dict | None = None, system: str | None = None, installs: Callable | None = None) -> Result:
+    from . import starnet as sn
+    name = "starnet"
+    env = os.environ if env is None else env
+    system = sys.platform if system is None else system
+    d, where = flag, ""
+    if not d and env.get("DARKROOM_STARNET_DIR"):
+        d = env["DARKROOM_STARNET_DIR"]
+    if not d:
+        found = (installs or sn.installed)()
+        if not found:
+            return Result(name, WARN, "not installed: run `darkroom get-starnet`",
+                          "`darkroom get-starnet` downloads StarNet2 from starnetastro.com once you accept its "
+                          "licence; or set DARKROOM_STARNET_DIR / --starnet-dir to a StarNet folder. Without "
+                          "StarNet use the cluster look or `darkroom star-reduce`")
+        d, where = str(found[0].dir), "installed by darkroom get-starnet"
+    folder = Path(d).expanduser().resolve()
+    if not folder.is_dir():
+        return Result(name, FAIL, f"{folder} is not a directory",
+                      "point DARKROOM_STARNET_DIR / --starnet-dir at a StarNet command-line folder")
+    if (folder / STARNET2_EXE).is_file():
+        return _check_starnet2(folder, where, run_sample, run, system)
+    exe = folder / STARNET_EXE
+    if not _is_exec(exe):
+        what = "not executable" if exe.is_file() else "missing"
+        return Result(name, FAIL, f"{exe} {what} (and no starnet2)",
+                      f"chmod +x '{exe}'" if exe.is_file() else
+                      "run `darkroom get-starnet`, or point --starnet-dir at a folder with starnet2 or starnet++")
+    if not (folder / STARNET_WEIGHTS).is_file():
+        return Result(name, FAIL, f"{STARNET_WEIGHTS} missing in {folder}",
+                      "the weights file ships with the StarNet CLI download; put it next to starnet++")
+    notes = []
+    if system == "darwin":
+        bad, notes = _arch_check(exe, run)
+        if bad:
+            return bad
+        bad = _quarantine_check(folder, [exe, *sorted(folder.glob("*.dylib"))], run)
+        if bad:
+            return bad
     if not run_sample:
-        return Result(name, OK, f"{folder} ({', '.join(notes + ['not executed; --run-starnet runs it'])})")
+        return Result(name, OK, f"{folder} (StarNet v2 starnet++; {', '.join(notes + ['not executed; --run-starnet runs it'])})")
     sample = folder / STARNET_SAMPLE
     if not sample.is_file():
         return Result(name, WARN, f"{STARNET_SAMPLE} not in {folder}; cannot test-run",
@@ -387,7 +597,7 @@ def check_starnet(flag: str | None = None, run_sample: bool = False, run: Callab
             last = log.strip().splitlines()[-1][:160] if log.strip() else "no output"
             return Result(name, FAIL, f"test run failed (exit {rc}): {last}",
                           "run ./starnet++ rgb_test.tif out.tif in the StarNet folder to see the full error")
-        return Result(name, OK, f"{folder} ({', '.join(notes + [f'sample run {dt:.0f}s'])})")
+        return Result(name, OK, f"{folder} (StarNet v2 starnet++; {', '.join(notes + [f'sample run {dt:.0f}s'])})")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -474,13 +684,15 @@ def check_disk(work: Path | None, subs: Path | None, free_of: Callable = lambda 
 
 def run_checks(args) -> list[Result]:
     """Run every applicable check (concurrently, to keep the wall time down); results in fixed order."""
+    starnet_flag = args.starnet_dir or _config_starnet_dir(args.work)
     jobs: list[tuple[str, Callable[[], Result | None]]] = [
+        ("system", check_system),
         ("python", check_python),
         ("siril", check_siril),
         ("graxpert", check_graxpert),
         ("denoise model", check_model),
         ("gpu denoise", check_gpu),
-        ("starnet", lambda: check_starnet(args.starnet_dir, args.run_starnet)),
+        ("starnet", lambda: check_starnet(starnet_flag, args.run_starnet)),
     ]
     if not args.offline:
         jobs.append(("catalogue", check_catalogue))
@@ -495,6 +707,17 @@ def run_checks(args) -> list[Result]:
     with ThreadPoolExecutor(max_workers=len(jobs)) as ex:
         futs = [ex.submit(safe, n, f) for n, f in jobs]
         return [r for r in (f.result() for f in futs) if r is not None]
+
+
+def _config_starnet_dir(work: Path | None) -> str | None:
+    """[starnet] dir from <work>/darkroom.toml, when --work is given and it sets one."""
+    if work is None:
+        return None
+    try:
+        from . import config
+        return config.resolve(work)["starnet"]["dir"]
+    except Exception:
+        return None
 
 
 def format_table(results: list[Result]) -> str:
@@ -512,8 +735,8 @@ def exit_code(results: list[Result]) -> int:
 
 EPILOG = """\
 environment:
-  DARKROOM_SIRIL, DARKROOM_GRAXPERT, DARKROOM_GRAXPERT_MODEL, DARKROOM_CACHE, DARKROOM_STARNET_DIR
-  (see `darkroom --help` for defaults)
+  DARKROOM_SIRIL, DARKROOM_GRAXPERT, DARKROOM_GRAXPERT_MODEL, DARKROOM_CACHE, DARKROOM_STARNET_DIR,
+  DARKROOM_TOOLS_DIR (see `darkroom --help` for defaults)
 
 exit status is 1 if any check FAILs, else 0. Doctor only reports; the one thing it may write is the cached fixed-batch denoise model.
 """
@@ -527,9 +750,11 @@ def _add_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--subs", type=Path, metavar="DIR", default=None,
                    help="directory with the light subs: estimate the space a run needs")
     p.add_argument("--starnet-dir", metavar="DIR", default=None,
-                   help="folder containing starnet++ (default: $DARKROOM_STARNET_DIR)")
+                   help="folder containing starnet2 or starnet++ (default: [starnet] dir of --work, then "
+                        "$DARKROOM_STARNET_DIR, then the newest StarNet2 installed by `darkroom get-starnet`)")
     p.add_argument("--run-starnet", action="store_true",
-                   help="also run StarNet on its bundled rgb_test.tif (about a minute)")
+                   help="also run StarNet v2.0.2 on its bundled rgb_test.tif (about a minute); "
+                        "StarNet2 is always checked with --machine-info instead")
     p.add_argument("--offline", action="store_true", help="skip the catalogue server checks")
     p.add_argument("--json", action="store_true", help="print results as JSON")
 

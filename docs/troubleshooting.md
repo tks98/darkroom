@@ -22,9 +22,11 @@ The Seestar's sensor is not cooled, so its temperature follows the night. During
 
 For that data it mattered little. A stack without the dark was 2% noisier in the background and kept some isolated hot pixels. On M13, the dark (6.8 °C off) still gave about 4% less noise than no dark at all. When `init` warns, also make a `dark = "none"` stack and compare. Darks taken at the end of a session, when the sensor has cooled, would match better.
 
-## StarNet is blocked by Gatekeeper
+## StarNet v2.0.2 is blocked by Gatekeeper
 
-The StarNet command-line version for macOS is an unsigned Intel binary that runs under Rosetta. macOS Gatekeeper blocks it until you choose to allow it, and that is your decision to make.
+This applies only to the old StarNet v2.0.2. StarNet2 2.6, which `darkroom get-starnet` installs, is signed and runs natively on Apple Silicon.
+
+The v2.0.2 command-line version for macOS is an unsigned Intel binary that runs under Rosetta. macOS Gatekeeper blocks it until you choose to allow it, and that is your decision to make.
 
 Clearing the quarantine flag on the StarNet folder is what allows it to run:
 
@@ -32,7 +34,11 @@ Clearing the quarantine flag on the StarNet folder is what allows it to run:
 xattr -dr com.apple.quarantine path/to/StarNetv2CLI_MacOS
 ```
 
-`doctor` reports the flag and never clears it, and it never runs a quarantined StarNet (that would pop up the macOS warning). Until StarNet is allowed, the `cluster` look and `darkroom star-reduce` work without it.
+`doctor` reports the flag and never clears it, and it never runs a quarantined StarNet (that would pop up the macOS warning). Until StarNet is allowed, the `cluster` look and `darkroom star-reduce` work without it, or install StarNet2 with `darkroom get-starnet`.
+
+## The subs folder is read-only
+
+Siril refuses to `cd` into a folder it cannot write to, even though darkroom never writes there. When the subs folder is read-only (as in the Docker image, where it is mounted read-only), `stack` makes `<work>/process/subs/` with a link to each sub and points Siril at that instead. Nothing needs doing; this is here in case you see that folder.
 
 ## `siril-cli` cannot find the script
 
