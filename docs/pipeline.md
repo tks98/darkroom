@@ -9,7 +9,7 @@ darkroom runs seven stages. Each reads the previous stage's file from the work d
 | `color` | Siril | `bge.fits` | `spcc.fit` |
 | `denoise` | GraXpert's model, run with onnxruntime | `spcc.fit` | `denoised.fits` |
 | `stretch` | Siril | `denoised.fits` | `stretched.fit`, `stretched.tif`, `stretched.jpg` |
-| `starnet` | StarNet v2 | `stretched.tif` | `starless.tif` |
+| `starnet` | StarNet2 | `stretched.tif` | `starless.tif` |
 | `finish` | Python | `stretched.tif`, `starless.tif` | `final.tif`, `final.jpg` |
 
 The numbers below come from the M31 run: 404 subs of 30 seconds from a Seestar S30 Pro, on an Apple Silicon Mac.
@@ -48,7 +48,7 @@ Siril applies an arcsinh stretch, which brightens faint parts while keeping star
 
 ## starnet
 
-StarNet v2 splits the stretched image into a starless image. The star layer is worked out later as the difference. With `[finish] stars = "keep"` (the cluster look) this stage is skipped.
+StarNet splits the stretched image into a starless image. darkroom runs StarNet2 2.6, installed by `darkroom get-starnet`, or the older StarNet v2.0.2 if you point it at that folder; the two gave the same M31 result to within 0.01 of an 8-bit level. Switching versions reruns this stage and `finish`. The star layer is worked out later as the difference. With `[finish] stars = "keep"` (the cluster look) this stage is skipped.
 
 ## finish
 

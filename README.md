@@ -51,6 +51,7 @@ darkroom run  --work m31
 ## Documentation
 
 - [Installing](docs/install.md): requirements, `setup.sh`, `darkroom doctor`, environment variables, tests.
+- [Running darkroom in Docker](docs/docker.md): the Linux image, for Linux, Windows or anywhere you would rather not install Siril and GraXpert.
 - [Using darkroom](docs/usage.md): `init` and `run`, single stages, what to check after each stage, comparing variants, disk space.
 - [Configuration](docs/configuration.md): every setting with its default, dark selection, framing, star reduction, cropping, and the galaxy and cluster looks.
 - [How it works](docs/pipeline.md): what each stage does, with numbers from M31.

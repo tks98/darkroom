@@ -106,7 +106,9 @@ A low `asinh` gives a softer, flatter image with a brighter core. Higher values 
 
 | Key | Default | Meaning |
 |---|---|---|
-| `dir` | `$DARKROOM_STARNET_DIR` | folder with the StarNet CLI and its weights |
+| `dir` | see below | folder with the StarNet command line and its weights |
+
+darkroom looks for StarNet in this order: `--starnet-dir`, `[starnet] dir`, `$DARKROOM_STARNET_DIR`, then the newest StarNet2 installed by `darkroom get-starnet`. A folder with `starnet2` in it is StarNet2 2.6; one with `starnet++` is the older v2.0.2.
 
 ## [finish]
 
