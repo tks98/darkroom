@@ -40,7 +40,13 @@ class FinishParams:
 
 
 def load(p):
-    x = tifffile.imread(p).astype(np.float32)
+    try:
+        x = tifffile.imread(p)
+    except ValueError as e:      # tifffile needs imagecodecs for the LZW TIFF that StarNet2 writes
+        if "imagecodecs" in str(e).lower():
+            raise ValueError(f"cannot read {p}: {e} (pip install imagecodecs)") from None
+        raise
+    x = x.astype(np.float32)
     if x.shape[0] == 3 and x.ndim == 3:
         x = np.moveaxis(x, 0, -1)
     return x / (65535.0 if x.max() > 1.5 else 1.0)

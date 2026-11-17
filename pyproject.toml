@@ -13,6 +13,7 @@ dependencies = [
     "scipy",
     "astropy",
     "tifffile",
+    "imagecodecs",          # StarNet2 writes LZW-compressed TIFF
     "pillow",
     "onnx",
     "onnxruntime==1.32.0",

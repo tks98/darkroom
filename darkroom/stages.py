@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 from pathlib import Path
@@ -98,7 +99,10 @@ def stack(work: Path, subs: Path, dark: Path | None, framing: str = "min", keep_
                     "--reuse-registration to re-frame and re-stack the frames already there.")
             remove_process(work)
         process.mkdir(parents=True, exist_ok=True)
-        values |= {"SUBS": str(subs), "DARK": str(dark) if dark is not None else ""}
+        siril_subs = subs
+        if not os.access(subs, os.W_OK):
+            siril_subs = stage_subs(subs, process)
+        values |= {"SUBS": str(siril_subs), "DARK": str(dark) if dark is not None else ""}
         name = "stack.ssf"
     script = siril.render_file(name, work, values)
     log = tools.logs_dir(work) / "stack.log"
@@ -109,6 +113,27 @@ def stack(work: Path, subs: Path, dark: Path | None, framing: str = "min", keep_
         print(f"stack: {kept[0]} frames stacked" + (f" of {kept[1]}" if kept[1] else ""), flush=True)
     if clean:
         remove_process(work)
+
+
+STAGED_SUBS = "subs"
+
+
+def stage_subs(subs: Path, process: Path, log=print) -> Path:
+    """Siril (1.4.5 on Linux at least) refuses to `cd` into a read-only folder, such as subs
+    mounted read-only into a container. Give it <process>/subs instead: one symlink per *.fit
+    sub, same names. It is deleted with the rest of <work>/process."""
+    staged = process / STAGED_SUBS
+    if staged.is_symlink() or staged.is_file():
+        staged.unlink()
+    elif staged.is_dir():
+        shutil.rmtree(staged)
+    staged.mkdir(parents=True)
+    files = sorted(subs.glob("*.fit"))
+    for f in files:
+        (staged / f.name).symlink_to(subs / f.name)
+    log(f"stack: {subs} is not writable, which Siril cannot work from; linked its {len(files)} "
+        f"*.fit files into {staged}")
+    return staged
 
 
 def frames_kept(log_path: Path) -> tuple[int, int | None] | None:
@@ -207,14 +232,64 @@ def stretch(work: Path, asinh=25.0, shadows=-2.5, target_bg=0.10, sat=0.35) -> N
 
 
 def starnet(work: Path, starnet_dir: str | None = None) -> None:
+    from . import starnet as sn
     work = _abs(work)
     src = tools.require_file(work / STRETCHED_TIF, "stretched TIFF (run `darkroom stretch` first)")
     d = tools.starnet_dir(starnet_dir)
+    backend = sn.detect(d)
+    if backend is None:
+        raise tools.StageError(f"neither starnet2 nor starnet++ found in {d}")
     log = tools.logs_dir(work) / "starnet.log"
-    log.write_text("")
-    # StarNet finds its weights relative to the cwd, so it must run from its own folder.
-    tools.run_tool(["./starnet++", str(src), str(work / STARLESS)], log, cwd=d)
-    tools.check_outputs([work / STARLESS], log)
+    log.write_text(f"[darkroom] {backend.label} in {d}\n")
+    print(f"starnet: {backend.label} in {d}", flush=True)
+    # Both StarNet versions find their weights relative to their own folder, so they run from it.
+    if backend.kind == sn.LEGACY:
+        tools.run_tool(backend.command(src, work / STARLESS), log, cwd=d)
+        tools.check_outputs([work / STARLESS], log)
+        return
+    # StarNet2 writes to a temporary name first, so a failed run cannot leave an old starless.tif
+    # looking current. Its output is kept as written (LZW-compressed 16-bit TIFF, read with imagecodecs).
+    tmp = work / "starless.starnet2-tmp.tif"
+    tmp.unlink(missing_ok=True)
+    try:
+        tools.run_tool(backend.command(src, tmp), log, cwd=d)
+        tools.check_outputs([tmp], log)
+        check_starless(tmp, src)
+        tmp.replace(work / STARLESS)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def check_starless(starless: Path, stretched: Path) -> None:
+    """Fail clearly if StarNet2's output cannot be read or does not match the input's size."""
+    import tifffile
+    try:
+        with tifffile.TiffFile(starless) as t:
+            page = t.pages[0]
+            shape = page.shape
+            page.asarray()          # decodes; LZW needs the imagecodecs package
+        with tifffile.TiffFile(stretched) as t:
+            want = t.pages[0].shape
+    except Exception as e:
+        hint = (" (StarNet2 writes LZW-compressed TIFF; install imagecodecs: pip install imagecodecs)"
+                if "imagecodecs" in str(e).lower() else "")
+        raise tools.StageError(f"cannot read StarNet's output {starless.name}: {e}{hint}") from None
+    def hwc(sh):        # (3, H, W) planar -> (H, W, 3), as finish.load reads it
+        sh = tuple(sh)
+        return sh[1:] + sh[:1] if len(sh) == 3 and sh[0] == 3 else sh
+    if hwc(shape) != hwc(want):
+        raise tools.StageError(f"StarNet's output has shape {tuple(shape)}, the input {tuple(want)}")
+
+
+def starnet_params(starnet_dir: str | None) -> dict:
+    """Recorded settings of the starnet stage: the StarNet2 product and version, or nothing for
+    StarNet v2.0.2 (and nothing when no StarNet can be found; the stage then fails before running)."""
+    from . import starnet as sn
+    try:
+        backend = sn.detect(tools.starnet_dir(starnet_dir))
+    except tools.StageError:
+        return {}
+    return backend.params() if backend else {}
 
 
 def finish(work: Path, params: FinishParams, out: str = FINAL) -> None:

@@ -1,4 +1,4 @@
-"""GraXpert AI denoise on the Apple GPU (CoreML) using a current onnxruntime.
+"""GraXpert AI denoise on the GPU (CoreML on macOS, CUDA where onnxruntime has it) or the CPU.
 
 GraXpert 3.1.0rc2's bundled onnxruntime can't compile the denoise model for
 CoreML on macOS 27, so this reimplements GraXpert's denoise() (GPL-3,
@@ -85,10 +85,32 @@ def fixed_batch_model(log_path: Path, log=print) -> Path:
     return dst
 
 
+COREML = ("CoreMLExecutionProvider", {"ModelFormat": "MLProgram", "MLComputeUnits": "ALL"})
+
+
+def providers(cpu: bool, available, system: str | None = None) -> tuple[list, str]:
+    """(onnxruntime provider list, backend label). CoreML on macOS when onnxruntime has it,
+    else CUDA when it has that, else the CPU; ``cpu`` forces the CPU."""
+    system = sys.platform if system is None else system
+    available = set(available)
+    if cpu:
+        return ["CPUExecutionProvider"], "CPU"
+    if system == "darwin" and "CoreMLExecutionProvider" in available:
+        return [COREML, "CPUExecutionProvider"], "CoreML"
+    if "CUDAExecutionProvider" in available:
+        return ["CUDAExecutionProvider", "CPUExecutionProvider"], "CUDA"
+    return ["CPUExecutionProvider"], "CPU"
+
+
 def run(src: Path, dst: Path, strength: float, cpu: bool, log_path: Path, log=print) -> None:
     import onnxruntime as ort
     from astropy.io import fits
 
+    if not tools.graxpert_model().is_file():
+        from . import models
+        log(f"denoise model not found at {tools.graxpert_model()}; fetching it with GraXpert "
+            "(the same as `darkroom fetch-models`)")
+        models.fetch_denoise_model(log_path, log)
     model = fixed_batch_model(log_path, log)
     with fits.open(src) as hdul:
         hdr, data = hdul[0].header, hdul[0].data.astype(np.float32)
@@ -96,9 +118,9 @@ def run(src: Path, dst: Path, strength: float, cpu: bool, log_path: Path, log=pr
         raise tools.StageError(f"{src}: expected a 3-channel Siril/GraXpert FITS, got shape {data.shape}")
     img = np.ascontiguousarray(np.moveaxis(data, 0, -1))
 
-    prov = ["CPUExecutionProvider"] if cpu else [
-        ("CoreMLExecutionProvider", {"ModelFormat": "MLProgram", "MLComputeUnits": "ALL"}),
-        "CPUExecutionProvider"]
+    prov, backend = providers(cpu, ort.get_available_providers())
+    log(f"denoise backend: {backend}" + (" (--cpu)" if cpu else "")
+        + ("" if cpu or backend != "CPU" else " (onnxruntime has no CoreML or CUDA provider here; this is slow)"))
     t = time.time()
     sess = ort.InferenceSession(str(model), providers=prov)
     log(f"providers: {sess.get_providers()}  (load {time.time() - t:.1f}s)")
@@ -106,6 +128,5 @@ def run(src: Path, dst: Path, strength: float, cpu: bool, log_path: Path, log=pr
     t = time.time()
     out = denoise(img, sess, strength, log)
     log(f"denoise done in {time.time() - t:.1f}s")
-    backend = "CPU" if cpu else "CoreML"
     hdr["HISTORY"] = f"GraXpert denoise 3.0.2 strength {strength} via onnxruntime {ort.__version__} {backend}"
     fits.PrimaryHDU(np.moveaxis(out, -1, 0), header=hdr).writeto(dst, overwrite=True)

@@ -1,20 +1,62 @@
 """External tool locations, logging and subprocess helpers.
 
 Every machine-specific location comes from an environment variable (or a CLI
-flag); the defaults are the standard macOS install locations.
+flag); the defaults are the standard install locations on macOS and on Linux
+(the Linux ones match the darkroom Docker image).
 """
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
 
+# macOS defaults
 DEFAULT_SIRIL = "/Applications/Siril.app/Contents/MacOS/siril-cli"
 DEFAULT_GRAXPERT = "/Applications/GraXpert.app/Contents/MacOS/GraXpert"
 DEFAULT_GRAXPERT_MODEL = "~/Library/Application Support/GraXpert/denoise-ai-models/3.0.2/model.onnx"
 DEFAULT_CACHE = "~/Library/Caches/darkroom"
+
+# Linux defaults (siril-cli and GraXpert are looked up on $PATH first)
+LINUX_SIRIL = "siril-cli"
+LINUX_GRAXPERT = "/opt/graxpert/GraXpert-linux/GraXpert"
+LINUX_GRAXPERT_MODEL_REL = "GraXpert/denoise-ai-models/3.0.2/model.onnx"   # under $XDG_DATA_HOME
+
+
+def is_macos() -> bool:
+    return sys.platform == "darwin"
+
+
+def default_siril() -> str:
+    if is_macos():
+        return DEFAULT_SIRIL
+    return shutil.which(LINUX_SIRIL) or LINUX_SIRIL
+
+
+def default_graxpert() -> str:
+    if is_macos():
+        return DEFAULT_GRAXPERT
+    return shutil.which("GraXpert") or LINUX_GRAXPERT
+
+
+def _xdg(var: str, fallback: str) -> str:
+    v = os.environ.get(var)
+    return v if v and os.path.isabs(os.path.expanduser(v)) else fallback
+
+
+def default_graxpert_model() -> str:
+    """Where GraXpert itself keeps the 3.0.2 denoise model on this platform."""
+    if is_macos():
+        return DEFAULT_GRAXPERT_MODEL
+    return _xdg("XDG_DATA_HOME", "~/.local/share").rstrip("/") + "/" + LINUX_GRAXPERT_MODEL_REL
+
+
+def default_cache() -> str:
+    if is_macos():
+        return DEFAULT_CACHE
+    return _xdg("XDG_CACHE_HOME", "~/.cache").rstrip("/") + "/darkroom"
 
 
 class StageError(RuntimeError):
@@ -22,29 +64,46 @@ class StageError(RuntimeError):
 
 
 def siril_cli() -> Path:
-    return Path(os.environ.get("DARKROOM_SIRIL", DEFAULT_SIRIL)).expanduser()
+    return Path(os.environ.get("DARKROOM_SIRIL") or default_siril()).expanduser()
 
 
 def graxpert() -> Path:
-    return Path(os.environ.get("DARKROOM_GRAXPERT", DEFAULT_GRAXPERT)).expanduser()
+    return Path(os.environ.get("DARKROOM_GRAXPERT") or default_graxpert()).expanduser()
 
 
 def graxpert_model() -> Path:
-    return Path(os.environ.get("DARKROOM_GRAXPERT_MODEL", DEFAULT_GRAXPERT_MODEL)).expanduser()
+    return Path(os.environ.get("DARKROOM_GRAXPERT_MODEL") or default_graxpert_model()).expanduser()
 
 
 def cache_dir() -> Path:
-    return Path(os.environ.get("DARKROOM_CACHE", DEFAULT_CACHE)).expanduser()
+    return Path(os.environ.get("DARKROOM_CACHE") or default_cache()).expanduser()
+
+
+STARNET_LOOKUP = ("--starnet-dir DIR", "[starnet] dir in darkroom.toml", "$DARKROOM_STARNET_DIR",
+                  "the newest StarNet2 installed by `darkroom get-starnet`")
 
 
 def starnet_dir(flag: str | None) -> Path:
-    d = flag or os.environ.get("DARKROOM_STARNET_DIR")
-    if not d:
-        raise StageError("StarNet directory not set: pass --starnet-dir DIR or set DARKROOM_STARNET_DIR "
-                         "(the folder containing the starnet++ executable and its weights)")
+    """The StarNet folder to use. ``flag`` is --starnet-dir or, failing that, [starnet] dir
+    (the settings resolver has already merged the two). Then $DARKROOM_STARNET_DIR, then the
+    newest StarNet2 that `darkroom get-starnet` installed under <cache>/starnet."""
+    from . import starnet
+    if flag:
+        d, where = flag, "--starnet-dir / [starnet] dir"
+    elif os.environ.get("DARKROOM_STARNET_DIR"):
+        d, where = os.environ["DARKROOM_STARNET_DIR"], "$DARKROOM_STARNET_DIR"
+    else:
+        found = starnet.installed()
+        if found:
+            return found[0].dir
+        raise StageError(
+            "StarNet not found. darkroom looks, in this order, at: " + "; ".join(STARNET_LOOKUP)
+            + f" (none in {starnet.installs_root()}). Run `darkroom get-starnet` to install StarNet2, "
+            "or point one of the others at the folder containing starnet2 (StarNet2 2.6) or "
+            "starnet++ (StarNet v2.0.2)")
     p = Path(d).expanduser().resolve()
-    if not (p / "starnet++").is_file():
-        raise StageError(f"starnet++ not found in {p}")
+    if starnet.detect(p) is None:
+        raise StageError(f"neither starnet2 nor starnet++ found in {p} (from {where})")
     return p
 
 

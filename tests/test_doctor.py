@@ -144,20 +144,20 @@ class FakeSystem:
 
 
 def test_starnet_not_configured_is_warn():
-    r = doctor.check_starnet(None, env={})
+    r = doctor.check_starnet(None, env={}, system="darwin")
     assert r.status == WARN and "star-reduce" in r.fix
 
 
 def test_starnet_env_var_is_used(tmp_path):
     d = starnet_folder(tmp_path)
-    assert doctor.check_starnet(None, run=FakeSystem(), env={"DARKROOM_STARNET_DIR": str(d)}).status == OK
+    assert doctor.check_starnet(None, run=FakeSystem(), env={"DARKROOM_STARNET_DIR": str(d)}, system="darwin").status == OK
 
 
 @pytest.mark.parametrize("flagged", ["starnet++", "libtensorflow.2.dylib"])
 def test_quarantine_fails_and_never_executes(tmp_path, flagged):
     d = starnet_folder(tmp_path)
     sysm = FakeSystem(quarantined=[flagged])
-    r = doctor.check_starnet(str(d), run_sample=True, run=sysm, env={})
+    r = doctor.check_starnet(str(d), run_sample=True, run=sysm, env={}, system="darwin")
     assert r.status == FAIL and flagged in r.detail
     assert "xattr -dr com.apple.quarantine" in r.fix and "your decision" in r.fix
     assert not sysm.executed_starnet
@@ -166,32 +166,32 @@ def test_quarantine_fails_and_never_executes(tmp_path, flagged):
 
 def test_starnet_not_run_by_default(tmp_path):
     sysm = FakeSystem()
-    r = doctor.check_starnet(str(starnet_folder(tmp_path)), run=sysm, env={})
+    r = doctor.check_starnet(str(starnet_folder(tmp_path)), run=sysm, env={}, system="darwin")
     assert r.status == OK and "Rosetta" in r.detail and not sysm.executed_starnet
 
 
 def test_starnet_sample_run(tmp_path):
     d = starnet_folder(tmp_path)
     sysm = FakeSystem()
-    r = doctor.check_starnet(str(d), run_sample=True, run=sysm, env={})
+    r = doctor.check_starnet(str(d), run_sample=True, run=sysm, env={}, system="darwin")
     assert r.status == OK and "sample run" in r.detail and sysm.executed_starnet
     out = Path(next(c for c in sysm.calls if c[0] == "./starnet++")[2])
     assert not out.exists() and not out.parent.exists()          # temp output cleaned up
     assert sorted(p.name for p in d.iterdir()) == ["libtensorflow.2.dylib", "rgb_test.tif",
                                                    "starnet++", "starnet2_weights.pb"]
-    assert doctor.check_starnet(str(d), run_sample=True, run=FakeSystem(starnet_rc=1), env={}).status == FAIL
+    assert doctor.check_starnet(str(d), run_sample=True, run=FakeSystem(starnet_rc=1), env={}, system="darwin").status == FAIL
 
 
 def test_starnet_broken_installs(tmp_path):
     d = starnet_folder(tmp_path)
-    assert doctor.check_starnet(str(d), run=FakeSystem(rosetta_rc=1), env={}).status == FAIL
+    assert doctor.check_starnet(str(d), run=FakeSystem(rosetta_rc=1), env={}, system="darwin").status == FAIL
     assert doctor.check_starnet(str(d), run=FakeSystem(arch="Mach-O 64-bit executable arm64",
-                                                       rosetta_rc=1), env={}).status == OK
+                                                       rosetta_rc=1), env={}, system="darwin").status == OK
     (d / "starnet2_weights.pb").unlink()
-    assert "weights" in doctor.check_starnet(str(d), run=FakeSystem(), env={}).detail
+    assert "weights" in doctor.check_starnet(str(d), run=FakeSystem(), env={}, system="darwin").detail
     (d / "starnet++").unlink()
-    assert doctor.check_starnet(str(d), run=FakeSystem(), env={}).status == FAIL
-    assert doctor.check_starnet(str(tmp_path / "nowhere"), run=FakeSystem(), env={}).status == FAIL
+    assert doctor.check_starnet(str(d), run=FakeSystem(), env={}, system="darwin").status == FAIL
+    assert doctor.check_starnet(str(tmp_path / "nowhere"), run=FakeSystem(), env={}, system="darwin").status == FAIL
 
 
 # ---- catalogue
@@ -282,7 +282,7 @@ def test_main_json_and_exit_code(monkeypatch, capsys):
 
 
 def test_run_checks_selection_and_crash_isolation(monkeypatch):
-    for n in ("python", "siril", "graxpert", "model", "gpu", "catalogue"):
+    for n in ("system", "python", "siril", "graxpert", "model", "gpu", "catalogue"):
         monkeypatch.setattr(doctor, f"check_{n}", lambda n=n: Result(n, OK, ""))
     monkeypatch.setattr(doctor, "check_starnet", lambda flag, run: Result("starnet", OK, f"{flag} {run}"))
 
@@ -291,9 +291,9 @@ def test_run_checks_selection_and_crash_isolation(monkeypatch):
     monkeypatch.setattr(doctor, "check_siril", boom)
     ns = argparse.Namespace(work=None, subs=None, starnet_dir="S", run_starnet=True, offline=False, json=False)
     res = doctor.run_checks(ns)
-    assert [r.name for r in res] == ["python", "siril", "graxpert", "model", "gpu", "starnet", "catalogue"]
-    assert res[1].status == FAIL and "bug" in res[1].detail
-    assert res[5].detail == "S True"
+    assert [r.name for r in res] == ["system", "python", "siril", "graxpert", "model", "gpu", "starnet", "catalogue"]
+    assert res[2].status == FAIL and "bug" in res[2].detail
+    assert res[6].detail == "S True"
     ns.offline = True
     assert "catalogue" not in [r.name for r in doctor.run_checks(ns)]
 
