@@ -70,7 +70,7 @@ def test_graxpert_falls_back_to_long_flag(tmp_path):
     def run(cmd, timeout=15, cwd=None):
         seen.append(cmd[1])
         return (0, "GraXpert version: 3.1.0" if cmd[1] == "--version" else "")
-    assert doctor.check_graxpert(fake_exe(tmp_path / "GraXpert"), run=run).status == OK
+    assert doctor.check_graxpert(fake_exe(tmp_path / "GraXpert"), run=run, system="linux").status == OK
     assert seen == ["-v", "--version"]
 
 

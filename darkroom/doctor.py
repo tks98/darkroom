@@ -5,8 +5,9 @@ the outside world goes through ``run_cmd`` (subprocess), ``http_get`` (urllib)
 or plain filesystem calls on paths passed in, so the tests can replace them.
 
 Doctor only reports. Apart from building the cached fixed-batch denoise model on
-first use, it never changes files, settings or quarantine flags, and
-it never executes StarNet when macOS has it quarantined. On Linux the macOS-only
+first use, it never changes files, settings or quarantine flags, it never executes
+StarNet when macOS has it quarantined, and it never executes a quarantined Siril or
+GraXpert that Gatekeeper would block (not notarized and not yet allowed by the user). On Linux the macOS-only
 checks (quarantine flag, Rosetta, executable architecture) are skipped.
 """
 from __future__ import annotations
@@ -211,12 +212,44 @@ def parse_siril_version(text: str) -> tuple[int, int, int] | None:
     return None
 
 
-def check_siril(path: Path | None = None, run: Callable = run_cmd) -> Result:
+def _resolved(tool: str, path: Path | None) -> tuple[Path, str]:
+    if path is not None:
+        return path, ""
+    exe, source = tools.resolve_tool(tool)
+    return exe, f" ({source})"
+
+
+def _gatekeeper(name: str, exe: Path, run: Callable, system: str | None) -> tuple[Result | None, str]:
+    """macOS: (FAIL result, "") when exe is quarantined and Gatekeeper would block it (it is then
+    not executed); else (None, note) where note mentions a quarantine that Gatekeeper accepts."""
+    from . import toolset
+    system = sys.platform if system is None else system
+    if system != "darwin":
+        return None, ""
+    value = toolset.quarantine_value(exe, run)
+    if value is None:
+        return None, ""
+    if toolset.user_approved(value):
+        return None, "; quarantined, allowed by you"
+    target = toolset.bundle_of(exe)
+    ok, source = toolset.assess(target, run)
+    if ok:
+        return None, f"; quarantined, accepted by Gatekeeper: {source}"
+    return Result(name, FAIL, f"{exe}: quarantined by macOS and not notarized ({source or 'rejected by Gatekeeper'}); "
+                  "Gatekeeper will block it; doctor did not execute it", toolset.allow_instructions(target)), ""
+
+
+def check_siril(path: Path | None = None, run: Callable = run_cmd, system: str | None = None) -> Result:
     name = "siril"
-    exe = path or tools.siril_cli()
-    fix_install = "install Siril 1.4.x from siril.org, or set DARKROOM_SIRIL to its siril-cli"
+    exe, source = _resolved("siril", path)
+    fix_install = ("run `darkroom setup`, install Siril 1.4.x from siril.org, or set DARKROOM_SIRIL to its "
+                   "siril-cli")
     if not _is_exec(exe):
-        return Result(name, FAIL, f"{exe} is not an executable", fix_install)
+        return Result(name, FAIL, f"{exe} is not an executable{source}", fix_install)
+    blocked, note = _gatekeeper(name, exe, run, system)
+    if blocked:
+        return blocked
+    source = source[:-1] + note + ")" if source else (f" ({note[2:]})" if note else "")
     try:
         rc, out = run([str(exe), "--version"], timeout=20)
     except subprocess.TimeoutExpired:
@@ -229,11 +262,11 @@ def check_siril(path: Path | None = None, run: Callable = run_cmd) -> Result:
                       "check that DARKROOM_SIRIL points to siril-cli, not another program")
     vs = ".".join(map(str, v))
     if v < SIRIL_MIN:
-        return Result(name, FAIL, f"Siril {vs} at {exe}; darkroom needs 1.4.x", fix_install)
+        return Result(name, FAIL, f"Siril {vs} at {exe}{source}; darkroom needs 1.4.x", fix_install)
     if v[:2] != (1, 4):
-        return Result(name, WARN, f"Siril {vs} at {exe}; darkroom was verified with 1.4.x",
+        return Result(name, WARN, f"Siril {vs} at {exe}{source}; darkroom was verified with 1.4.x",
                       "the Siril scripts may need changes for this version; 1.4.x is known to work")
-    return Result(name, OK, f"Siril {vs} at {exe}")
+    return Result(name, OK, f"Siril {vs} at {exe}{source}")
 
 
 # ---------------------------------------------------------------- 3. graxpert
@@ -243,12 +276,18 @@ def parse_graxpert_version(text: str) -> str | None:
     return m.group(1) if m else None
 
 
-def check_graxpert(path: Path | None = None, run: Callable = run_cmd, timeout: float = 15.0) -> Result:
+def check_graxpert(path: Path | None = None, run: Callable = run_cmd, timeout: float = 15.0,
+                   system: str | None = None) -> Result:
     name = "graxpert"
-    exe = path or tools.graxpert()
-    fix_install = "install GraXpert 3.1 from graxpert.com, or set DARKROOM_GRAXPERT to its executable"
+    exe, source = _resolved("graxpert", path)
+    fix_install = ("run `darkroom setup`, install GraXpert 3.1 from graxpert.com, or set DARKROOM_GRAXPERT to "
+                   "its executable")
     if not _is_exec(exe):
-        return Result(name, FAIL, f"{exe} is not an executable", fix_install)
+        return Result(name, FAIL, f"{exe} is not an executable{source}", fix_install)
+    blocked, note = _gatekeeper(name, exe, run, system)
+    if blocked:
+        return blocked
+    source = source[:-1] + note + ")" if source else (f" ({note[2:]})" if note else "")
     out, rc = "", None
     for flag in ("-v", "--version"):
         try:
@@ -261,9 +300,9 @@ def check_graxpert(path: Path | None = None, run: Callable = run_cmd, timeout: f
         v = parse_graxpert_version(out)
         if v:
             if not v.startswith(GRAXPERT_VERIFIED):
-                return Result(name, WARN, f"GraXpert {v} at {exe}; verified with {GRAXPERT_VERIFIED}.x",
+                return Result(name, WARN, f"GraXpert {v} at {exe}{source}; verified with {GRAXPERT_VERIFIED}.x",
                               "background extraction may behave differently; 3.1 is known to work")
-            return Result(name, OK, f"GraXpert {v} at {exe}")
+            return Result(name, OK, f"GraXpert {v} at {exe}{source}")
     return Result(name, WARN, f"{exe}: could not parse version (exit {rc})",
                   "check that DARKROOM_GRAXPERT points to the GraXpert executable")
 
@@ -696,8 +735,8 @@ def exit_code(results: list[Result]) -> int:
 
 EPILOG = """\
 environment:
-  DARKROOM_SIRIL, DARKROOM_GRAXPERT, DARKROOM_GRAXPERT_MODEL, DARKROOM_CACHE, DARKROOM_STARNET_DIR
-  (see `darkroom --help` for defaults)
+  DARKROOM_SIRIL, DARKROOM_GRAXPERT, DARKROOM_GRAXPERT_MODEL, DARKROOM_CACHE, DARKROOM_STARNET_DIR,
+  DARKROOM_TOOLS_DIR (see `darkroom --help` for defaults)
 
 exit status is 1 if any check FAILs, else 0. Doctor only reports; the one thing it may write is the cached fixed-batch denoise model.
 """

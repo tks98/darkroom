@@ -1,27 +1,33 @@
 #!/bin/bash
 # Set up darkroom in this checkout: venv, dependencies, the cached denoise
-# model, the optional agent skill link(s), then `darkroom doctor`.
-# Safe to run again; it only creates what is missing.
+# model, the optional agent skill link(s), then `darkroom setup` (Siril and
+# GraXpert if missing, the denoise model, an offer to install StarNet2, and
+# `darkroom doctor`). Safe to run again; it only creates what is missing.
 set -euo pipefail
 
 usage() {
     cat <<'USAGE'
-usage: ./setup.sh [--skill-dir DIR]... [--no-skill] [--starnet-dir DIR] [--offline]
+usage: ./setup.sh [--skill-dir DIR]... [--no-skill] [--no-tools] [--starnet-dir DIR] [--offline]
 
   --skill-dir DIR     link skill/ as DIR/darkroom: the skills folder of your agent
                       (repeatable; default: ~/.claude/skills)
   --no-skill          do not link the skill anywhere
-  --starnet-dir DIR   passed to `darkroom doctor` (else $DARKROOM_STARNET_DIR)
-  --offline           passed to `darkroom doctor` (skip catalogue server checks)
+  --no-tools          do not run `darkroom setup` (no Siril/GraXpert install, no
+                      denoise model download, no StarNet2 offer); only run `darkroom doctor`
+  --starnet-dir DIR   passed to `darkroom setup` / `darkroom doctor` (else $DARKROOM_STARNET_DIR)
+  --offline           passed to `darkroom setup` / `darkroom doctor` (no downloads, skip
+                      catalogue server checks)
 USAGE
 }
 
 skill=1
+tools=1
 skill_dirs=()
 doctor_args=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --no-skill) skill=0 ;;
+        --no-tools) tools=0 ;;
         --skill-dir)
             [ $# -ge 2 ] || { echo "setup: --skill-dir needs a directory" >&2; exit 2; }
             skill_dirs+=("$2"); shift ;;
@@ -110,14 +116,20 @@ else
     done
 fi
 
-# 5. environment check
-echo "== darkroom doctor"
+# 5. Siril, GraXpert, the denoise model and StarNet2 (`darkroom setup` ends with doctor),
+#    or only the environment check with --no-tools
 rc=0
-.venv/bin/python -m darkroom.doctor ${doctor_args[@]+"${doctor_args[@]}"} || rc=$?
+if [ "$tools" -eq 1 ]; then
+    echo "== darkroom setup"
+    .venv/bin/python -m darkroom setup ${doctor_args[@]+"${doctor_args[@]}"} || rc=$?
+else
+    echo "== darkroom doctor (tools skipped: --no-tools)"
+    .venv/bin/python -m darkroom.doctor ${doctor_args[@]+"${doctor_args[@]}"} || rc=$?
+fi
 
 echo
 echo "Activate the environment with:  source .venv/bin/activate"
 if [ "$rc" -ne 0 ]; then
-    echo "doctor reported failures (see fixes above); setup itself completed."
+    echo "setup or doctor reported failures (see above); the venv and package are installed."
 fi
 exit "$rc"

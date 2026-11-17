@@ -7,7 +7,7 @@ import time
 from collections import namedtuple
 from pathlib import Path
 
-from . import __version__, config, doctor, get_starnet, stages, tools
+from . import __version__, config, doctor, get_starnet, installer, stages, tools, toolset
 from .finish import FinishParams, parse_aspect, parse_center, parse_crop
 
 def env_help() -> str:
@@ -19,8 +19,12 @@ settings:
   camera preset, then the built-in default shown above.
 
 environment (defaults for this platform, {"macOS" if tools.is_macos() else "Linux"}):
-  DARKROOM_SIRIL            siril-cli (default {tools.default_siril()})
-  DARKROOM_GRAXPERT         GraXpert (default {tools.default_graxpert()})
+  DARKROOM_SIRIL            siril-cli (default: the one `darkroom setup` installed, else
+                            {tools.default_siril()})
+  DARKROOM_GRAXPERT         GraXpert (default: the one `darkroom setup` installed, else
+                            {tools.default_graxpert()})
+  DARKROOM_TOOLS_DIR        where `darkroom setup` installs Siril and GraXpert
+                            (default {toolset.default_tools_dir()})
   DARKROOM_GRAXPERT_MODEL   GraXpert 3.0.2 denoise model; `darkroom fetch-models` downloads it
                             (default {tools.default_graxpert_model()})
   DARKROOM_CACHE            cache for the fixed-batch denoise model and StarNet2 installed by
@@ -330,6 +334,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--mask", type=Path, default=None, help="optionally save the star mask here")
     doctor.add_parser(sp)
     get_starnet.add_parser(sp)
+    installer.add_parser(sp)
     p = sp.add_parser("fetch-models", help="make GraXpert download its AI denoise model 3.0.2",
                       description="make GraXpert download its AI denoise model 3.0.2",
                       epilog=FETCH_MODELS_EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -677,7 +682,7 @@ def main(argv=None) -> int:
     if a.cmd == "doctor":  # reports only: no work dir is created, and its exit code is the result
         return a.func(a)
     try:
-        if a.cmd in ("get-starnet", "fetch-models"):
+        if a.cmd in ("get-starnet", "fetch-models", "setup"):
             return a.func(a)
         _dispatch(a)
     except tools.StageError as e:

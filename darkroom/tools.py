@@ -63,12 +63,26 @@ class StageError(RuntimeError):
     """A stage failed; the message is shown to the user and the CLI exits non-zero."""
 
 
+def resolve_tool(tool: str) -> tuple[Path, str]:
+    """(executable, where it came from) for "siril" or "graxpert", in this order:
+    $DARKROOM_SIRIL / $DARKROOM_GRAXPERT, then a managed install made by `darkroom setup`
+    (under $DARKROOM_TOOLS_DIR or its platform default), then the platform default."""
+    from . import toolset
+    var = toolset.ENV_VARS[tool]
+    if os.environ.get(var):
+        return Path(os.environ[var]).expanduser(), f"${var}"
+    m = toolset.managed(tool)
+    if m is not None:
+        return m.exe, f"installed by darkroom setup in {m.dir}"
+    return Path(default_siril() if tool == "siril" else default_graxpert()).expanduser(), "platform default"
+
+
 def siril_cli() -> Path:
-    return Path(os.environ.get("DARKROOM_SIRIL") or default_siril()).expanduser()
+    return resolve_tool("siril")[0]
 
 
 def graxpert() -> Path:
-    return Path(os.environ.get("DARKROOM_GRAXPERT") or default_graxpert()).expanduser()
+    return resolve_tool("graxpert")[0]
 
 
 def graxpert_model() -> Path:
@@ -110,7 +124,18 @@ def starnet_dir(flag: str | None) -> Path:
 def require_executable(p: Path, envvar: str) -> Path:
     if not (p.is_file() and os.access(p, os.X_OK)):
         raise StageError(f"{p} is not an executable; set {envvar} to its location")
+    if is_macos():
+        from . import toolset
+        key = (str(p), p.stat().st_mtime_ns)
+        if key not in _GATEKEEPER_OK:            # spctl can take a second; check each binary once
+            blocked = toolset.gatekeeper_block(p)
+            if blocked:
+                raise StageError(blocked)
+            _GATEKEEPER_OK.add(key)
     return p
+
+
+_GATEKEEPER_OK: set[tuple[str, int]] = set()
 
 
 def require_file(p: Path, what: str) -> Path:
