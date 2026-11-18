@@ -22,7 +22,7 @@ FRAMINGS = ("min", "cog", "max")
 _F = FinishParams()
 
 # section -> key -> (type, built-in default, one-line description)
-# types: "str", "path", "float", "int", "bool"
+# types: "str", "path", "float", "int", "bool", "psf" (a number, or "auto")
 SCHEMA: dict[str, dict[str, tuple[str, object, str]]] = {
     "target": {
         "name": ("str", None, "object name (informational)"),
@@ -55,6 +55,11 @@ SCHEMA: dict[str, dict[str, tuple[str, object, str]]] = {
     },
     "denoise": {
         "strength": ("float", 0.6, "denoise strength 0..1"),
+        "cpu": ("bool", False, "run on the CPU instead of the GPU (CoreML on macOS, CUDA if available)"),
+    },
+    "deconv": {
+        "strength": ("float", 0, "GraXpert object deconvolution strength 0..1; 0 = off (the stage is skipped)"),
+        "psf": ("psf", "auto", 'star FWHM in pixels, or "auto" to measure it from the denoised image'),
         "cpu": ("bool", False, "run on the CPU instead of the GPU (CoreML on macOS, CUDA if available)"),
     },
     "stretch": {
@@ -155,8 +160,19 @@ def preset_path(kind: str, name: str, base: Path | None = None) -> Path:
 
 def _coerce(section: str, key: str, value, where: str, base: Path | None):
     typ = SCHEMA[section][key][0]
-    bad = ConfigError(f"{where}: [{section}] {key} should be {'a number' if typ in ('float', 'int') else typ},"
-                      f" got {value!r}")
+    want = {"float": "a number", "int": "a number", "psf": 'a number or "auto"'}.get(typ, typ)
+    bad = ConfigError(f"{where}: [{section}] {key} should be {want}, got {value!r}")
+    if typ == "psf":
+        if isinstance(value, str):
+            if value.strip().lower() == "auto":
+                return "auto"
+            try:
+                return float(value)
+            except ValueError:
+                raise bad from None
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise bad
+        return value
     if typ == "bool":
         if not isinstance(value, bool):
             raise bad
@@ -203,6 +219,11 @@ def _check(values: dict[str, dict[str, object]]) -> None:
         raise ConfigError(f'[finish] stars should be "reduce" or "keep", got {f["stars"]!r}')
     if not 0 < f["crop_scale"] <= 1:
         raise ConfigError(f"[finish] crop_scale is a fraction (0 < value <= 1), got {f['crop_scale']!r}")
+    dc = values["deconv"]
+    if not 0 <= dc["strength"] <= 1:
+        raise ConfigError(f"[deconv] strength is 0 (off) to 1, got {dc['strength']!r}")
+    if dc["psf"] != "auto" and not 0 < dc["psf"] <= 50:
+        raise ConfigError(f'[deconv] psf is the star FWHM in pixels (0 < value <= 50) or "auto", got {dc["psf"]!r}')
     d = values["target"]["dark"]
     if d is not None and d.lower() in ("auto", "none"):
         values["target"]["dark"] = d.lower()

@@ -90,7 +90,7 @@ def test_run_skips_starnet_when_stars_are_kept(fake, capsys):
     with open(work / "darkroom.toml", "a") as f:
         f.write('stars = "keep"\n')
     assert run(work) == 0
-    assert names(ran) == [s for s in stages.STAGES if s != "starnet"]
+    assert names(ran) == [s for s in stages.STAGES if s not in ("starnet", "deconv")]
     assert '-- starnet: not needed' in capsys.readouterr().out
     assert run(work) == 0 and names(ran) == []                   # and the result is up to date
 

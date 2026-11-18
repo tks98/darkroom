@@ -94,6 +94,18 @@ The camera preset sets `sensor`, `filter`, `focal` and `pixel`, and `init` write
 | `strength` | 0.6 | 0 to 1 |
 | `cpu` | false | run on the CPU instead of the Apple GPU (about 15 times slower) |
 
+## [deconv]
+
+Optional deconvolution with GraXpert's object deconvolution model, between `denoise` and `stretch`. It is off by default. It needs GraXpert's model (1.0.1, 279 MB), which `darkroom deconv` has GraXpert download the first time, or `darkroom fetch-models --deconv`; set `DARKROOM_DECONV_MODEL` if the file is somewhere else.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `strength` | 0 (off) | 0 to 1. At 0 the stage is skipped and `stretch` reads `denoised.fits` |
+| `psf` | `auto` | star FWHM in pixels, or `"auto"` to measure it from `denoised.fits` |
+| `cpu` | false | run on the CPU instead of the GPU |
+
+Flags: `darkroom deconv --strength 0.5 --psf 3.2 --cpu`; `darkroom run --cpu` also covers this stage. Turning `strength` from 0 to a value, or back, reruns `stretch` and everything after it. Work directories made before this stage existed stay up to date while it is off. Start around 0.3 to 0.5 and compare 1:1 crops before and after: dark rings around bright stars or a crunchy sky mean the strength is too high.
+
 ## [stretch]
 
 | Key | Default | Meaning |

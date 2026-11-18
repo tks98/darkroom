@@ -56,3 +56,11 @@ On the Rosette, 139 of 151 frames were solved and 127 stacked, with no visible s
 
 The same work added a camera preset for the original S30 (`seestar-s30`: 150 mm, its own SPCC sensor entry). Camera detection now prefers an exact match of the header value and otherwise the longest matching text, so the S30 preset does not claim S30 Pro subs.
 
+
+## Optional deconvolution
+
+A `deconv` stage between `denoise` and `stretch` runs GraXpert's object deconvolution AI model (1.0.1) through onnxruntime, ported from GraXpert 3.1's `deconvolution.py` the same way the denoise stage is. It is off by default (`[deconv] strength = 0`): the stage is then skipped, `stretch` reads `denoised.fits` as before, and existing work directories stay up to date. On M31 with it off, the stretch was skipped as up to date, and a forced rerun gave a `stretched.fit` and `stretched.tif` identical to the earlier ones.
+
+The model is GraXpert's, under CC BY-NC-SA 4.0, so it is not in the repository; GraXpert downloads it from its own server the first time the stage runs. `psf = "auto"` measures the star size from the denoised image: on M31 it gave a median FWHM of 2.50 pixels from 252 stars, against 2.59 from Siril's `findstar` on the green channel. An earlier hand-run trial had assumed 3.2.
+
+With strength 0.5 and a PSF of 3.2 pixels, the stage on the Apple GPU matched the same code on the CPU to 2e-6, and a hand-run prototype that used CoreML's default settings to at most 0.012 and 7e-7 on average. That trial made the dust lanes near the core slightly crisper and the stars slightly tighter. The stage takes about 20 to 25 seconds on M31.
