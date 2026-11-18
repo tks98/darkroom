@@ -222,3 +222,12 @@ def test_template_conditionals():
     assert siril.render(t, {"A": "", "B": "x"}) == "no\nopt=x\n"
     with pytest.raises(KeyError):
         siril.render(t, {"B": "x"})            # A is still required
+
+
+def test_finish_core_recorded_only_when_on():
+    from darkroom import stages
+    base = {"gamma": 1.6, "star_strength": 0.95, "mid": 0.45, "sat": 1.2, "yb": 1.8, "sharpen": 0.8,
+            "sharpen_radius": 2.0, "black": 0.02, "erode": 0, "neutral": True, "crop": "none",
+            "crop_center": None}
+    assert "core" not in stages.result_params("finish", base | {"core": 0.0})
+    assert stages.result_params("finish", base | {"core": 0.3})["core"] == 0.3

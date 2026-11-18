@@ -229,6 +229,8 @@ def _finish_args(o):
     o.add("--sat", type=float, default=d.sat, key=("finish", "sat"), help="saturation on starless")
     o.add("--yb", type=float, default=d.yb, key=("finish", "yb"),
           help=">1 stretches yellow/blue differences inside the galaxy")
+    o.add("--core", type=float, default=d.core, key=("finish", "core"),
+          help="compress the brightest part of the target, keeping its detail (0 = off)")
     o.add("--sharpen", type=float, default=d.sharpen, key=("finish", "sharpen"),
           help="unsharp-mask amount on galaxy luminance")
     o.add("--sharpen-radius", type=float, default=d.sharpen_radius, key=("finish", "sharpen_radius"),
@@ -258,7 +260,7 @@ def _crop_arg(o):
 def _finish_params(a) -> FinishParams:
     """FinishParams straight from parsed flags (no config file); kept for tests and scripts."""
     crop = a.crop
-    return FinishParams(gamma=a.gamma, star_strength=a.star_strength, mid=a.mid, sat=a.sat, yb=a.yb,
+    return FinishParams(gamma=a.gamma, star_strength=a.star_strength, mid=a.mid, sat=a.sat, yb=a.yb, core=a.core,
                         sharpen=a.sharpen, sharpen_radius=a.sharpen_radius, black=a.black,
                         erode=a.erode, neutral=a.neutral,
                         crop=None if isinstance(crop, Aspect) else crop,

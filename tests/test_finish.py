@@ -94,7 +94,7 @@ def test_recombine_without_stars_or_polish_is_identity_like():
     """No stars, no black lift, mid 0.5, sat 1, no yb/sharpen/neutral -> output == starless."""
     rng = np.random.default_rng(2)
     sl = rng.uniform(0.05, 0.6, (48, 48, 3)).astype(np.float32)
-    p = FinishParams(black=0.0, mid=0.5, sat=1.0, yb=1.0, sharpen=0.0, neutral=False)
+    p = FinishParams(black=0.0, mid=0.5, sat=1.0, yb=1.0, core=0.0, sharpen=0.0, neutral=False)
     out = fin.recombine(sl, sl, p, log=lambda m: None)
     np.testing.assert_allclose(out, sl, atol=1e-6)
 
@@ -119,3 +119,39 @@ def test_neutralize_is_not_fooled_by_unequal_channel_noise():
     med = np.median(out.reshape(-1, 3), axis=0)
     assert np.ptp(med) < 0.001
     assert abs(np.median(out) - 0.10) < 0.002         # and the level is unchanged
+
+
+def _bulge(n=200, peak=0.97):
+    """Synthetic starless image: dim sky, a bright Gaussian bulge with fine ripples, warm colour."""
+    yy, xx = np.mgrid[:n, :n].astype(np.float32)
+    r2 = (yy - n / 2) ** 2 + (xx - n / 2) ** 2
+    L = 0.08 + (peak - 0.08) * np.exp(-r2 / (2 * 30 ** 2)) * (1 + 0.02 * np.sin(xx / 2))
+    return np.clip(np.stack([L * 1.05, L, L * 0.9], -1), 0, 1).astype(np.float32)
+
+
+def test_compress_core_off_is_identity():
+    g = _bulge()
+    assert np.array_equal(fin.compress_core(g, 0.0), g)
+
+
+def test_compress_core_lowers_core_keeps_sky_and_colour():
+    g = _bulge()
+    out = fin.compress_core(g, 0.3)
+    c = 100
+    assert out[c, c].mean() < g[c, c].mean() - 0.02          # the core comes down
+    assert np.allclose(out[:10, :10], g[:10, :10])           # sky far from the core untouched
+    ratio = out[c - 5:c + 5, c - 5:c + 5] / g[c - 5:c + 5, c - 5:c + 5]
+    assert np.allclose(ratio[..., 0], ratio[..., 2], atol=1e-5)   # same factor on every channel
+
+
+def test_compress_core_keeps_fine_detail():
+    g = _bulge()
+    out = fin.compress_core(g, 0.3)
+    hp = lambda a: a.mean(-1) - fin.ndi.gaussian_filter(a.mean(-1), 3)
+    core = (slice(85, 115), slice(85, 115))
+    rel = lambda a: hp(a)[core].std() / a.mean(-1)[core].mean()
+    assert rel(out) >= rel(g) * 0.99                          # relative ripple contrast not flattened
+
+
+def test_default_core():
+    assert FinishParams().core == 0.3

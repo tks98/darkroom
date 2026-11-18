@@ -18,6 +18,7 @@ star_strength = 0.95                 # star layer multiplier
 mid = 0.45                           # midtone lift on the starless layer (<0.5 brightens)
 sat = 1.2                            # saturation on the starless layer
 yb = 1.8                             # yellow/blue contrast inside the galaxy (1 = off; cosmetic)
+core = 0.3                           # compress the bright core, keeping its detail (0 = off)
 sharpen = 0.8                        # unsharp-mask amount on the galaxy luminance
 sharpen_radius = 2.0                 # unsharp-mask Gaussian sigma (px)
 black = 0.02                         # black point lift on the starless layer
