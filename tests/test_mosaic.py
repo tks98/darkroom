@@ -131,8 +131,17 @@ def test_siril_cache_dir(monkeypatch, tmp_path):
     assert mosaic.siril_cache_dir() == tmp_path
     monkeypatch.delenv("DARKROOM_SIRIL_CACHE")
     monkeypatch.setattr(tools, "is_macos", lambda: False)
-    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg"))
+    # Linux: Siril keeps its download cache in its config folder, not in XDG_CACHE_HOME
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdgcache"))
+    assert mosaic.siril_cache_dir() == tmp_path / "home" / ".config" / "siril" / "download_cache"
+    monkeypatch.setenv("HOME", "/cache")                     # the Docker image
+    assert mosaic.siril_cache_dir() == Path("/cache/.config/siril/download_cache")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     assert mosaic.siril_cache_dir() == tmp_path / "xdg" / "siril" / "download_cache"
+    monkeypatch.setenv("XDG_CONFIG_HOME", "relative/ignored")
+    assert mosaic.siril_cache_dir() == Path("/cache/.config/siril/download_cache")
     monkeypatch.setattr(tools, "is_macos", lambda: True)
     assert mosaic.siril_cache_dir().parts[-4:] == ("Application Support", "org.siril.Siril", "siril",
                                                    "download_cache")

@@ -120,14 +120,17 @@ def detect(files: list[Path], focal_mm: float, pixel_um: float) -> Spread | None
 # ------------------------------------------------------- catalogue prefill
 
 def siril_cache_dir() -> Path:
-    """Where Siril keeps downloaded catalogues (DARKROOM_SIRIL_CACHE overrides it)."""
+    """Where Siril keeps downloaded catalogues (DARKROOM_SIRIL_CACHE overrides it).
+
+    Siril puts them in its config folder, not a cache folder: on Linux that is
+    $XDG_CONFIG_HOME/siril/download_cache, by default ~/.config/siril/download_cache
+    (seen in Siril 1.4.5's AppImage, and in the Docker image, where HOME is /cache)."""
     override = os.environ.get("DARKROOM_SIRIL_CACHE")
     if override:
         return Path(override).expanduser()
     if tools.is_macos():
         return Path("~/Library/Application Support/org.siril.Siril/siril/download_cache").expanduser()
-    base = os.environ.get("XDG_CACHE_HOME") or "~/.cache"
-    return Path(base).expanduser() / "siril" / "download_cache"
+    return Path(tools._xdg("XDG_CONFIG_HOME", "~/.config")).expanduser() / "siril" / "download_cache"
 
 
 def cache_name(ra: float, dec: float, radius_arcmin: float, mag: float) -> str:
