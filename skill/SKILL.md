@@ -14,6 +14,7 @@ file from a work directory and writes its own:
 | `bge` | GraXpert background extraction | `bge.fits` |
 | `color` | Siril plate solve + SPCC colour calibration | `spcc.fit` |
 | `denoise` | GraXpert denoise model on the GPU | `denoised.fits` |
+| `deconv` | optional, off by default: GraXpert deconvolution model | `deconvolved.fits` |
 | `stretch` | Siril arcsinh + autostretch | `stretched.fit/.tif/.jpg` |
 | `starnet` | StarNet2 star removal | `starless.tif` |
 | `finish` | Python: enhance, shrink stars, recombine, crop | `final.tif/.jpg` |
@@ -142,6 +143,18 @@ cheap to fix at the stage that caused them and expensive to notice at the end.
 - Compare a 1:1 crop before and after. Noise should drop by roughly half at
   the default strength without the faint structure turning to plastic. Lower
   `[denoise] strength` if detail is being smoothed away.
+
+### After `deconv` (only when `[deconv] strength` > 0)
+- The stage is off by default and needs GraXpert's deconvolution model, which
+  it fetches the first time. Read the measured star FWHM in `logs/deconv.log`
+  (`psf auto: ...`); 2 to 4 pixels is normal for a Seestar.
+- Compare 1:1 crops of `denoised.fits` and `deconvolved.fits` at the same
+  quick stretch: a bright star, the brightest part of the target, and a patch
+  of sky. Fine structure should get slightly crisper and stars slightly
+  tighter.
+- Look for dark rings around bright stars and for a crunchy, grainy sky or
+  noise turned into worms. If you see either, lower `[deconv] strength` (or
+  set it to 0 to turn the stage off) and compare again.
 
 ### After `stretch`
 - The sky should be dark grey, not black, and the brightest core should not

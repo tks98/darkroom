@@ -30,6 +30,8 @@ Seven stages, each reading the previous one's output from a work directory:
 6. `starnet`: StarNet separates the stars from the target.
 7. `finish`: enhances the target, shrinks the stars, recombines, neutralises the sky and crops.
 
+An optional `deconv` stage between `denoise` and `stretch` runs GraXpert's deconvolution model to sharpen the linear image. It is off by default and needs GraXpert's model, which it has GraXpert download the first time; see [configuration](docs/configuration.md#deconv).
+
 A stage that is already up to date is skipped, so changing a finishing setting and running again takes about a second. [How it works](docs/pipeline.md) has the details and the numbers from the M31 run.
 
 ## Quick start

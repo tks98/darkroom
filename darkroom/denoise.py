@@ -23,6 +23,28 @@ from . import tools
 BATCH, WIN, STRIDE, THR = 8, 256, 128, 10.0        # THR = model_threshold for 2.x/3.x models
 
 
+def pad_for_tiles(image, win: int, stride: int):
+    """GraXpert's tile layout (denoising.py and deconvolution.py use the same one): extend the
+    H x W x C image at the bottom and right to a whole number of strides, one stride past
+    the edge, by repeating its last rows and columns, then by (win - stride) / 2 on every side.
+    Returns (padded image, tiles down, tiles across, offset). Tile (i, j) is
+    ``padded[stride*i : stride*i + win, stride*j : stride*j + win]``; its centre
+    ``[off : off + stride]`` belongs at ``padded[stride*i + off : stride*(i + 1) + off]``, and
+    ``padded[off : H + off, off : W + off]`` is the image."""
+    H, W = image.shape[:2]
+    off = (win - stride) // 2
+    ith, itw = H // stride + 1, W // stride + 1
+    dh, dw = ith * stride - H, itw * stride - W
+    if dh > H or dw > W or off > H + dh or off > W + dw:
+        raise ValueError(f"image {W}x{H} is too small for {win}-pixel tiles")
+    image = np.concatenate((image, image[H - dh:]), axis=0)
+    image = np.concatenate((image, image[:, W - dw:]), axis=1)
+    h, w = image.shape[:2]
+    image = np.concatenate((image[:off], image, image[h - off:]), axis=0)
+    image = np.concatenate((image[:, :off], image, image[:, w - off:]), axis=1)
+    return image, ith, itw, off
+
+
 def denoise(image, session, strength, log=print):
     """image: H x W x 3 float32 in [0,1]. Mirrors GraXpert's tiling/normalization."""
     original = image.copy()
@@ -30,14 +52,7 @@ def denoise(image, session, strength, log=print):
     mad = np.median(np.abs(image[::4, ::4, :] - median), axis=(0, 1))
 
     H, W, _ = image.shape
-    off = (WIN - STRIDE) // 2
-    ith, itw = H // STRIDE + 1, W // STRIDE + 1
-    dh, dw = ith * STRIDE - H, itw * STRIDE - W
-    image = np.concatenate((image, image[H - dh:]), axis=0)
-    image = np.concatenate((image, image[:, W - dw:]), axis=1)
-    h, w, _ = image.shape
-    image = np.concatenate((image[:off], image, image[h - off:]), axis=0)
-    image = np.concatenate((image[:, :off], image, image[:, w - off:]), axis=1)
+    image, ith, itw, off = pad_for_tiles(image, WIN, STRIDE)
     output = image.copy()
 
     n = ith * itw

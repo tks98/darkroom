@@ -320,6 +320,24 @@ def check_model(path: Path | None = None) -> Result:
     return Result("denoise model", OK, f"{p} ({p.stat().st_size / 1e6:.0f} MB)")
 
 
+DECONV_FIX = ("run `darkroom fetch-models --deconv` (GraXpert downloads its object deconvolution model 1.0.1), "
+              "or set DARKROOM_DECONV_MODEL to that model.onnx file")
+
+
+def check_deconv_model(path: Path | None = None, enabled: bool = False) -> Result:
+    """The optional deconv stage's model: a WARN only when [deconv] is on in the work dir's config."""
+    from . import models
+    name = "deconv model"
+    p = path or tools.deconv_model()
+    problem = models.deconv_model_problem(p)
+    if problem is None:
+        return Result(name, OK, f"{p} ({p.stat().st_size / 1e6:.0f} MB, object model {models.DECONV_VERSION})")
+    if enabled:
+        return Result(name, WARN, f"{problem}; [deconv] is on, so `darkroom deconv` will fetch it first",
+                      DECONV_FIX)
+    return Result(name, OK, f"{problem} (only needed when [deconv] strength > 0, which is off by default)")
+
+
 # ---------------------------------------------------------------- 5. gpu denoise
 
 def _coreml_providers():
@@ -691,6 +709,7 @@ def run_checks(args) -> list[Result]:
         ("siril", check_siril),
         ("graxpert", check_graxpert),
         ("denoise model", check_model),
+        ("deconv model", lambda: check_deconv_model(enabled=_config_deconv_on(args.work))),
         ("gpu denoise", check_gpu),
         ("starnet", lambda: check_starnet(starnet_flag, args.run_starnet)),
     ]
@@ -720,6 +739,17 @@ def _config_starnet_dir(work: Path | None) -> str | None:
         return None
 
 
+def _config_deconv_on(work: Path | None) -> bool:
+    """Whether <work>/darkroom.toml turns the optional deconv stage on (strength > 0)."""
+    if work is None:
+        return False
+    try:
+        from . import config
+        return float(config.resolve(work)["deconv"]["strength"]) > 0
+    except Exception:
+        return False
+
+
 def format_table(results: list[Result]) -> str:
     w = max((len(r.name) for r in results), default=0)
     lines = [f"{r.status:<4}  {r.name:<{w}}  {r.detail}" for r in results]
@@ -735,8 +765,8 @@ def exit_code(results: list[Result]) -> int:
 
 EPILOG = """\
 environment:
-  DARKROOM_SIRIL, DARKROOM_GRAXPERT, DARKROOM_GRAXPERT_MODEL, DARKROOM_CACHE, DARKROOM_STARNET_DIR,
-  DARKROOM_TOOLS_DIR (see `darkroom --help` for defaults)
+  DARKROOM_SIRIL, DARKROOM_GRAXPERT, DARKROOM_GRAXPERT_MODEL, DARKROOM_DECONV_MODEL, DARKROOM_CACHE,
+  DARKROOM_STARNET_DIR, DARKROOM_TOOLS_DIR (see `darkroom --help` for defaults)
 
 exit status is 1 if any check FAILs, else 0. Doctor only reports; the one thing it may write is the cached fixed-batch denoise model.
 """

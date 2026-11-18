@@ -284,6 +284,7 @@ def test_main_json_and_exit_code(monkeypatch, capsys):
 def test_run_checks_selection_and_crash_isolation(monkeypatch):
     for n in ("system", "python", "siril", "graxpert", "model", "gpu", "catalogue"):
         monkeypatch.setattr(doctor, f"check_{n}", lambda n=n: Result(n, OK, ""))
+    monkeypatch.setattr(doctor, "check_deconv_model", lambda enabled: Result("deconv", OK, str(enabled)))
     monkeypatch.setattr(doctor, "check_starnet", lambda flag, run: Result("starnet", OK, f"{flag} {run}"))
 
     def boom():
@@ -291,9 +292,11 @@ def test_run_checks_selection_and_crash_isolation(monkeypatch):
     monkeypatch.setattr(doctor, "check_siril", boom)
     ns = argparse.Namespace(work=None, subs=None, starnet_dir="S", run_starnet=True, offline=False, json=False)
     res = doctor.run_checks(ns)
-    assert [r.name for r in res] == ["system", "python", "siril", "graxpert", "model", "gpu", "starnet", "catalogue"]
+    assert [r.name for r in res] == ["system", "python", "siril", "graxpert", "model", "deconv", "gpu", "starnet",
+                                     "catalogue"]
     assert res[2].status == FAIL and "bug" in res[2].detail
-    assert res[6].detail == "S True"
+    assert res[5].detail == "False"                              # no --work: deconv counts as off
+    assert res[7].detail == "S True"
     ns.offline = True
     assert "catalogue" not in [r.name for r in doctor.run_checks(ns)]
 

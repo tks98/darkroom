@@ -10,7 +10,7 @@ from pathlib import Path
 from . import __version__, siril, tools
 from .finish import FinishParams, parse_center, parse_crop_spec
 
-STAGES = ["stack", "bge", "color", "denoise", "stretch", "starnet", "finish"]
+STAGES = ["stack", "bge", "color", "denoise", "deconv", "stretch", "starnet", "finish"]
 
 # Fixed filenames inside the work directory.
 STACK = "stack.fit"
@@ -18,6 +18,7 @@ BGE = "bge.fits"
 BGE_BACKGROUND = "bge_background.fits"
 SPCC = "spcc.fit"
 DENOISED = "denoised.fits"
+DECONVOLVED = "deconvolved.fits"
 STRETCHED_FIT = "stretched.fit"
 STRETCHED_TIF = "stretched.tif"
 STARLESS = "starless.tif"
@@ -331,12 +332,36 @@ def denoise(work: Path, strength: float = 0.6, cpu: bool = False) -> None:
     tools.check_outputs([work / DENOISED], log.path)
 
 
-def stretch(work: Path, asinh=25.0, shadows=-2.5, target_bg=0.10, sat=0.35) -> None:
+def deconv_on(deconv_table: dict) -> bool:
+    """The deconv stage runs only with a strength above 0; otherwise stretch reads denoised.fits."""
+    return float(deconv_table.get("strength", 0)) > 0
+
+
+def stretch_source(deconv_table: dict) -> str:
+    """The file the stretch stage reads: deconvolved.fits when deconvolution is on."""
+    return DECONVOLVED if deconv_on(deconv_table) else DENOISED
+
+
+def deconv(work: Path, strength: float = 0.0, psf="auto", cpu: bool = False) -> None:
+    from . import deconv as dc
     work = _abs(work)
-    tools.require_file(work / DENOISED, "denoised image (run `darkroom denoise` first)")
+    if not strength > 0:
+        raise tools.StageError("deconvolution is off ([deconv] strength = 0); set [deconv] strength or pass "
+                               "--strength (0 < value <= 1)")
+    src = tools.require_file(work / DENOISED, "denoised image (run `darkroom denoise` first)")
+    with tools.StageLog(work, "deconv") as log:
+        dc.run(src, work / DECONVOLVED, strength, psf, cpu, log.path, log)
+    tools.check_outputs([work / DECONVOLVED], log.path)
+
+
+def stretch(work: Path, asinh=25.0, shadows=-2.5, target_bg=0.10, sat=0.35, src: str = DENOISED) -> None:
+    work = _abs(work)
+    what = ("deconvolved image (run `darkroom deconv` first)" if src == DECONVOLVED
+            else "denoised image (run `darkroom denoise` first)")
+    tools.require_file(work / src, what)
     script = siril.render_file("stretch.ssf", work, {
         "WORK": str(work), "ASINH": siril.fmt_num(asinh), "SHADOWS": siril.fmt_num(shadows),
-        "TARGET_BG": siril.fmt_num(target_bg), "SAT": siril.fmt_num(sat),
+        "TARGET_BG": siril.fmt_num(target_bg), "SAT": siril.fmt_num(sat), "INPUT": src,
     })
     log = tools.logs_dir(work) / "stretch.log"
     siril.run_script(script, log)
@@ -446,6 +471,7 @@ _RESULT_KEYS = {
     "bge": ("smoothing",),
     "color": ("sensor", "filter", "focal", "pixel", "catalog", "whiteref"),
     "denoise": ("strength", "cpu"),
+    "deconv": ("strength", "psf", "cpu"),
     "stretch": ("asinh", "shadows", "target_bg", "sat"),
     "starnet": (),
     "finish": ("gamma", "star_strength", "mid", "sat", "yb", "sharpen", "sharpen_radius", "black", "erode",
@@ -481,10 +507,20 @@ def result_params(stage: str, table: dict) -> dict:
     return out
 
 
+def stretch_params(stretch_table: dict, deconv_table: dict) -> dict:
+    """Recorded settings of the stretch stage. Its input is recorded only when it is
+    deconvolved.fits, so work dirs made before the deconv stage existed (or with it off) stay
+    up to date, and switching deconvolution on or off reruns stretch and what follows."""
+    out = result_params("stretch", stretch_table)
+    if deconv_on(deconv_table):
+        out["input"] = DECONVOLVED
+    return out
+
+
 def outputs(work: Path, stage: str) -> list[Path]:
     work = _abs(work)
     names = {"stack": [STACK], "bge": [BGE, BGE_BACKGROUND], "color": [SPCC], "denoise": [DENOISED],
-             "stretch": [STRETCHED_FIT, STRETCHED_TIF], "starnet": [STARLESS],
+             "deconv": [DECONVOLVED], "stretch": [STRETCHED_FIT, STRETCHED_TIF], "starnet": [STARLESS],
              "finish": [f"{FINAL}.tif", f"{FINAL}.jpg"]}[stage]
     return [work / n for n in names]
 
@@ -497,7 +533,8 @@ def inputs(work: Path, stage: str, params: dict) -> list[Path]:
         if params["dark"] != "none":
             files.append(Path(params["dark"]))
         return files
-    names = {"bge": [STACK], "color": [BGE], "denoise": [SPCC], "stretch": [DENOISED],
+    names = {"bge": [STACK], "color": [BGE], "denoise": [SPCC], "deconv": [DENOISED],
+             "stretch": [params.get("input", DENOISED)],
              "starnet": [STRETCHED_TIF], "finish": [STRETCHED_TIF, STARLESS]}[stage]
     if stage == "finish" and params.get("stars") == "keep":
         names = [STRETCHED_TIF]                 # the starless image is not read

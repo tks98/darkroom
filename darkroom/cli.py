@@ -27,7 +27,10 @@ environment (defaults for this platform, {"macOS" if tools.is_macos() else "Linu
                             (default {toolset.default_tools_dir()})
   DARKROOM_GRAXPERT_MODEL   GraXpert 3.0.2 denoise model; `darkroom fetch-models` downloads it
                             (default {tools.default_graxpert_model()})
-  DARKROOM_CACHE            cache for the fixed-batch denoise model and StarNet2 installed by
+  DARKROOM_DECONV_MODEL     GraXpert 1.0.1 object deconvolution model, for the optional deconv
+                            stage; `darkroom fetch-models --deconv` downloads it
+                            (default {tools.default_deconv_model()})
+  DARKROOM_CACHE           cache for the fixed-batch denoise model and StarNet2 installed by
                             `darkroom get-starnet` (default {tools.default_cache()})
   DARKROOM_STARNET_DIR      folder containing starnet2 (StarNet2 2.6) or starnet++ (StarNet v2.0.2);
                             used when neither --starnet-dir nor [starnet] dir is set
@@ -45,7 +48,11 @@ otherwise never does, so this runs it once on a tiny synthetic image in a
 temporary folder and then checks that the model file exists. `darkroom denoise`
 does the same by itself when the model is missing.
 
-environment: DARKROOM_GRAXPERT, DARKROOM_GRAXPERT_MODEL (see `darkroom --help`)
+--deconv does the same for the object deconvolution model (1.0.1), which only the
+optional deconv stage uses; `darkroom deconv` also fetches it itself when missing.
+Both models are GraXpert's (CC BY-NC-SA 4.0) and come from GraXpert's server.
+
+environment: DARKROOM_GRAXPERT, DARKROOM_GRAXPERT_MODEL, DARKROOM_DECONV_MODEL (see `darkroom --help`)
 """
 
 
@@ -204,6 +211,27 @@ def _denoise_args(o):
     o.add("--cpu", action="store_true", key=("denoise", "cpu"), help="run on the CPU instead of the GPU (CoreML on macOS, CUDA if onnxruntime has it)")
 
 
+def _psf(s: str):
+    """--psf value: "auto" or a star FWHM in pixels."""
+    if s.strip().lower() == "auto":
+        return "auto"
+    try:
+        v = float(s)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f'expected a FWHM in pixels or "auto", got {s!r}') from None
+    if not 0 < v <= 50:
+        raise argparse.ArgumentTypeError(f"the FWHM is in pixels (0 < value <= 50), got {s!r}")
+    return v
+
+
+def _deconv_args(o):
+    o.add("--strength", type=float, default=0.0, key=("deconv", "strength"),
+          help="deconvolution strength 0..1; 0 = off")
+    o.add("--psf", type=_psf, default="auto", metavar="FWHM", key=("deconv", "psf"),
+          help='star FWHM in pixels, or "auto" to measure it from denoised.fits')
+    o.add("--cpu", action="store_true", key=("deconv", "cpu"), help="run on the CPU instead of the GPU (CoreML on macOS, CUDA if onnxruntime has it)")
+
+
 def _stretch_args(o):
     o.add("--asinh", type=float, default=25.0, key=("stretch", "asinh"), help="asinh -human stretch factor")
     o.add("--shadows", type=float, default=-2.5, key=("stretch", "shadows"),
@@ -281,7 +309,7 @@ written.
 
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="darkroom", description="Astrophotography pipeline: stack, background "
-                                 "extraction, colour calibration, denoise, stretch, star removal, finish.",
+                                 "extraction, colour calibration, denoise, optional deconvolution, stretch, star removal, finish.",
                                  epilog=env_help(), formatter_class=_Fmt)
     ap.add_argument("--version", action="version", version=f"darkroom {__version__}")
     sp = ap.add_subparsers(dest="cmd", required=True, metavar="COMMAND")
@@ -313,7 +341,12 @@ def build_parser() -> argparse.ArgumentParser:
     p, o = _sub(sp, "denoise", "GraXpert 3.0.2 AI denoise via onnxruntime: spcc.fit -> denoised.fits")
     _work(o); _denoise_args(o)
 
-    p, o = _sub(sp, "stretch", "Siril asinh + autostretch + saturation: denoised.fits -> stretched.fit, stretched.tif")
+    p, o = _sub(sp, "deconv", "optional GraXpert object deconvolution via onnxruntime (off unless [deconv] "
+                "strength > 0): denoised.fits -> deconvolved.fits")
+    _work(o); _deconv_args(o)
+
+    p, o = _sub(sp, "stretch", "Siril asinh + autostretch + saturation: denoised.fits (deconvolved.fits when "
+                "[deconv] is on) -> stretched.fit, stretched.tif")
     _work(o); _stretch_args(o)
 
     p, o = _sub(sp, "starnet", "StarNet star removal (StarNet2 2.6 or StarNet v2.0.2): stretched.tif -> starless.tif")
@@ -330,7 +363,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--to", choices=stages.STAGES, default=stages.STAGES[-1], metavar="STAGE", help="last stage")
     p.add_argument("--force", action="store_true", help="re-run every stage, up to date or not")
     _starnet_args(o)
-    o.add("--cpu", action="store_true", key=("denoise", "cpu"), help="denoise on the CPU instead of the GPU (CoreML on macOS, CUDA if onnxruntime has it)")
+    act = o.add("--cpu", action="store_true", key=("denoise", "cpu"),
+                help="denoise (and deconvolve, when [deconv] is on) on the CPU instead of the GPU "
+                     "(CoreML on macOS, CUDA if onnxruntime has it)")
+    o.keys[act.dest].append(("deconv", "cpu"))
     _crop_arg(o)
 
     p, o = _sub(sp, "star-reduce", "morphological star reduction on a stretched RGB FITS (non-StarNet fallback)")
@@ -347,6 +383,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = sp.add_parser("fetch-models", help="make GraXpert download its AI denoise model 3.0.2",
                       description="make GraXpert download its AI denoise model 3.0.2",
                       epilog=FETCH_MODELS_EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--deconv", action="store_true",
+                   help="also its object deconvolution model 1.0.1 (279 MB), for the optional deconv stage")
     p.set_defaults(func=_fetch_models)
     return ap
 
@@ -354,6 +392,8 @@ def build_parser() -> argparse.ArgumentParser:
 def _fetch_models(a) -> int:
     from . import models
     models.fetch_denoise_model()
+    if getattr(a, "deconv", False):
+        models.fetch_deconv_model()
     return 0
 
 
@@ -442,9 +482,13 @@ def _call(stage: str, work: Path, s: config.Settings, table: dict | None = None,
                      c["catalog_fallback"])
     elif stage == "denoise":
         stages.denoise(work, s["denoise"]["strength"], s["denoise"]["cpu"])
+    elif stage == "deconv":
+        d = s["deconv"]
+        stages.deconv(work, d["strength"], d["psf"], d["cpu"])
     elif stage == "stretch":
         t = s["stretch"]
-        stages.stretch(work, t["asinh"], t["shadows"], t["target_bg"], t["sat"])
+        stages.stretch(work, t["asinh"], t["shadows"], t["target_bg"], t["sat"],
+                       src=stages.stretch_source(s["deconv"]))
     elif stage == "starnet":
         stages.starnet(work, _starnet_dir(s))
     elif stage == "finish":
@@ -454,6 +498,8 @@ def _call(stage: str, work: Path, s: config.Settings, table: dict | None = None,
 def _params(stage: str, s: config.Settings, table: dict | None = None) -> dict:
     if stage == "starnet":
         return stages.result_params(stage, s[stage]) | stages.starnet_params(_starnet_dir(s))
+    if stage == "stretch":
+        return stages.stretch_params(s["stretch"], s["deconv"])
     return stages.result_params(stage, table if stage == "stack" else s[stage])
 
 
@@ -643,6 +689,9 @@ def _run(a) -> None:
     for stage in todo:
         if stage == "starnet" and not use_starnet:
             print('-- starnet: not needed ([finish] stars = "keep")', flush=True)
+            continue
+        if stage == "deconv" and not stages.deconv_on(s["deconv"]):
+            print("-- deconv: off ([deconv] strength = 0)", flush=True)
             continue
         params = _params(stage, s, table)
         forced = force_all or ran_any

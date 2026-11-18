@@ -130,22 +130,26 @@ def run(work, *extra):
     return cli.main(["run", "--work", str(work), *extra])
 
 
+DEFAULT = [s for s in stages.STAGES if s != "deconv"]       # the stages a default config runs
+
+
 def mtimes(work):
-    return {p.name: p.stat().st_mtime_ns for st in stages.STAGES for p in stages.outputs(work, st)}
+    return {p.name: p.stat().st_mtime_ns for st in DEFAULT for p in stages.outputs(work, st)}
 
 
 def test_second_run_skips_everything(fake, capsys):
     work, ran, _ = fake
     assert run(work) == 0
-    assert names(ran) == stages.STAGES
+    assert names(ran) == DEFAULT
     before = mtimes(work)
     capsys.readouterr()
     assert run(work) == 0
     assert names(ran) == []
     assert mtimes(work) == before
     out = capsys.readouterr().out
-    for st in stages.STAGES:
+    for st in DEFAULT:
         assert f"-- {st}: up to date, skipped" in out
+    assert "-- deconv: off ([deconv] strength = 0)" in out
 
 
 def test_changed_finish_setting_reruns_only_finish(fake):
@@ -176,7 +180,7 @@ def test_from_and_force(fake):
     assert run(work, "--from", "stretch", "--to", "stretch") == 0 and names(ran) == ["stretch"]
     assert run(work) == 0 and names(ran) == ["starnet", "finish"]     # stretched.tif is newer now
     assert run(work, "--force") == 0
-    assert [r[0] for r in ran] == stages.STAGES
+    assert [r[0] for r in ran] == DEFAULT
     assert ran[0][2]["force"] is True                                 # stack may clear process/
     names(ran)
     assert run(work, "--to", "color") == 0 and names(ran) == []
@@ -216,6 +220,59 @@ def test_failed_stage_leaves_no_record(fake, monkeypatch):
     assert stages.recorded_params(work, "stretch") is None
     monkeypatch.setattr(stages, "stretch", good)
     assert run(work) == 0 and names(ran) == ["stretch", "starnet", "finish"]
+
+
+def stretch_src(ran):
+    (call,) = [r for r in ran if r[0] == "stretch"]
+    return call[2]["src"]
+
+
+def test_deconv_off_leaves_stretch_as_it_was(fake, capsys):
+    work, ran, _ = fake
+    assert run(work) == 0
+    assert stretch_src(ran) == stages.DENOISED
+    assert "-- deconv: off ([deconv] strength = 0)" in capsys.readouterr().out
+    assert stages.recorded_params(work, "deconv") is None
+    s = cli.config.resolve(work)
+    assert stages.recorded_params(work, "stretch") == stages.result_params("stretch", s["stretch"])  # no new keys
+    assert not (work / stages.DECONVOLVED).exists()
+
+
+def test_switching_deconv_on_and_off(fake, capsys):
+    work, ran, _ = fake
+    run(work); names(ran)
+    plain = stages.recorded_params(work, "stretch")
+    cfg = work / "darkroom.toml"
+    text = cfg.read_text()
+    cfg.write_text(text + "[deconv]\nstrength = 0.5\n")
+    assert run(work) == 0
+    assert stretch_src(ran) == stages.DECONVOLVED
+    assert names(ran) == ["deconv", "stretch", "starnet", "finish"]
+    assert stages.recorded_params(work, "deconv") == {"strength": 0.5, "psf": "auto", "cpu": False}
+    assert stages.recorded_params(work, "stretch") == plain | {"input": "deconvolved.fits"}
+    assert run(work) == 0 and names(ran) == []
+    cfg.write_text(text + "[deconv]\nstrength = 0.5\npsf = 3.2\n")
+    assert run(work) == 0 and names(ran) == ["deconv", "stretch", "starnet", "finish"]
+    assert run(work, "--to", "deconv") == 0 and names(ran) == []
+    assert run(work, "--from", "deconv", "--to", "deconv") == 0 and names(ran) == ["deconv"]
+    assert run(work) == 0 and names(ran) == ["stretch", "starnet", "finish"]  # deconvolved.fits is newer
+    capsys.readouterr()
+    cfg.write_text(text + "[deconv]\nstrength = 0\npsf = 3.2\n")             # off again
+    assert run(work) == 0
+    assert stretch_src(ran) == stages.DENOISED
+    assert names(ran) == ["stretch", "starnet", "finish"]
+    assert "-- stretch: has to run (changed: input)" in capsys.readouterr().out
+    assert stages.recorded_params(work, "stretch") == plain
+    assert run(work) == 0 and names(ran) == []
+
+
+def test_denoise_change_reruns_deconv(fake):
+    work, ran, _ = fake
+    cfg = work / "darkroom.toml"
+    cfg.write_text(cfg.read_text() + "[deconv]\nstrength = 0.5\n")
+    assert run(work) == 0 and names(ran) == stages.STAGES
+    cfg.write_text(cfg.read_text() + "[denoise]\nstrength = 0.4\n")
+    assert run(work) == 0 and names(ran) == ["denoise", "deconv", "stretch", "starnet", "finish"]
 
 
 def test_result_params_ignore_unused_crop_center():

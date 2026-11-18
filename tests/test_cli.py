@@ -37,7 +37,7 @@ def test_stage_defaults():
 
 
 def test_run_stage_order():
-    assert stages.STAGES == ["stack", "bge", "color", "denoise", "stretch", "starnet", "finish"]
+    assert stages.STAGES == ["stack", "bge", "color", "denoise", "deconv", "stretch", "starnet", "finish"]
     a = parse("run", "--work", "w", "--from", "stretch", "--to", "finish")
     assert (a.from_, a.to) == ("stretch", "finish")
 

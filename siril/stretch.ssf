@@ -1,6 +1,7 @@
 ############################################
 # darkroom: stretch + saturation + export
-# Input: denoised, color-calibrated linear stack (denoised.fits)
+# Input: denoised, color-calibrated linear stack (denoised.fits, or
+#        deconvolved.fits when [deconv] is on)
 # Output: stretched.fit, stretched.tif (16-bit, uncompressed, StarNet input),
 #         stretched.jpg (preview)
 # Rendered by `darkroom stretch`.
@@ -8,7 +9,7 @@
 requires 1.4.0
 setext fit
 cd "{{WORK}}"
-load denoised.fits
+load {{INPUT=denoised.fits}}
 asinh -human {{ASINH}}
 autostretch -linked {{SHADOWS}} {{TARGET_BG}}
 satu {{SAT}} 1.5

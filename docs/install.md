@@ -73,6 +73,7 @@ darkroom finds the external tools through environment variables. Defaults are th
 | `DARKROOM_SIRIL` | the `siril-cli` executable. Default: inside `/Applications/Siril.app` |
 | `DARKROOM_GRAXPERT` | the GraXpert executable. Default: inside `/Applications/GraXpert.app` |
 | `DARKROOM_GRAXPERT_MODEL` | the GraXpert denoise model file, if it is not where GraXpert keeps it |
+| `DARKROOM_DECONV_MODEL` | GraXpert's object deconvolution model (1.0.1), for the optional `deconv` stage, if it is not where GraXpert keeps it |
 | `DARKROOM_STARNET_DIR` | a StarNet folder to use instead of the one `get-starnet` installed; `[starnet] dir` and `--starnet-dir` take precedence over it |
 | `DARKROOM_CACHE` | where the GPU copy of the denoise model is built and where `get-starnet` installs StarNet2. Default: `~/Library/Caches/darkroom` |
 | `DARKROOM_TOOLS_DIR` | where `darkroom setup` installs Siril and GraXpert. Default: `~/Library/Application Support/darkroom/tools` |

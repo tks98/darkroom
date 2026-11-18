@@ -17,12 +17,14 @@ from pathlib import Path
 DEFAULT_SIRIL = "/Applications/Siril.app/Contents/MacOS/siril-cli"
 DEFAULT_GRAXPERT = "/Applications/GraXpert.app/Contents/MacOS/GraXpert"
 DEFAULT_GRAXPERT_MODEL = "~/Library/Application Support/GraXpert/denoise-ai-models/3.0.2/model.onnx"
+DEFAULT_DECONV_MODEL = "~/Library/Application Support/GraXpert/deconvolution-object-ai-models/1.0.1/model.onnx"
 DEFAULT_CACHE = "~/Library/Caches/darkroom"
 
 # Linux defaults (siril-cli and GraXpert are looked up on $PATH first)
 LINUX_SIRIL = "siril-cli"
 LINUX_GRAXPERT = "/opt/graxpert/GraXpert-linux/GraXpert"
 LINUX_GRAXPERT_MODEL_REL = "GraXpert/denoise-ai-models/3.0.2/model.onnx"   # under $XDG_DATA_HOME
+LINUX_DECONV_MODEL_REL = "GraXpert/deconvolution-object-ai-models/1.0.1/model.onnx"
 
 
 def is_macos() -> bool:
@@ -51,6 +53,13 @@ def default_graxpert_model() -> str:
     if is_macos():
         return DEFAULT_GRAXPERT_MODEL
     return _xdg("XDG_DATA_HOME", "~/.local/share").rstrip("/") + "/" + LINUX_GRAXPERT_MODEL_REL
+
+
+def default_deconv_model() -> str:
+    """Where GraXpert itself keeps the 1.0.1 object deconvolution model on this platform."""
+    if is_macos():
+        return DEFAULT_DECONV_MODEL
+    return _xdg("XDG_DATA_HOME", "~/.local/share").rstrip("/") + "/" + LINUX_DECONV_MODEL_REL
 
 
 def default_cache() -> str:
@@ -87,6 +96,10 @@ def graxpert() -> Path:
 
 def graxpert_model() -> Path:
     return Path(os.environ.get("DARKROOM_GRAXPERT_MODEL") or default_graxpert_model()).expanduser()
+
+
+def deconv_model() -> Path:
+    return Path(os.environ.get("DARKROOM_DECONV_MODEL") or default_deconv_model()).expanduser()
 
 
 def cache_dir() -> Path:

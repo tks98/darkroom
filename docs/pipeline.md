@@ -1,6 +1,6 @@
 # How it works
 
-darkroom runs seven stages. Each reads the previous stage's file from the work directory and writes its own, so any stage can be redone without the ones before it. Logs from the external tools go to `<work>/logs/`.
+darkroom runs seven stages, plus an optional deconvolution stage that is off by default. Each reads the previous stage's file from the work directory and writes its own, so any stage can be redone without the ones before it. Logs from the external tools go to `<work>/logs/`.
 
 | Stage | Tool | Reads | Writes |
 |---|---|---|---|
@@ -8,7 +8,8 @@ darkroom runs seven stages. Each reads the previous stage's file from the work d
 | `bge` | GraXpert | `stack.fit` | `bge.fits`, `bge_background.fits` |
 | `color` | Siril | `bge.fits` | `spcc.fit` |
 | `denoise` | GraXpert's model, run with onnxruntime | `spcc.fit` | `denoised.fits` |
-| `stretch` | Siril | `denoised.fits` | `stretched.fit`, `stretched.tif`, `stretched.jpg` |
+| `deconv` (optional, off by default) | GraXpert's model, run with onnxruntime | `denoised.fits` | `deconvolved.fits` |
+| `stretch` | Siril | `denoised.fits` (`deconvolved.fits` when `deconv` is on) | `stretched.fit`, `stretched.tif`, `stretched.jpg` |
 | `starnet` | StarNet2 | `stretched.tif` | `starless.tif` |
 | `finish` | Python | `stretched.tif`, `starless.tif` | `final.tif`, `final.jpg` |
 
@@ -41,6 +42,14 @@ Siril downloads its star lists from VizieR. When VizieR is unreachable, this sta
 This runs GraXpert's AI denoise model (version 3.0.2) on the linear image, through onnxruntime on the Apple GPU. GraXpert's own GPU path fails on macOS 27 ([details](troubleshooting.md#graxperts-gpu-denoise-fails-on-macos)), so darkroom reimplements GraXpert's tiling and blending around the same model.
 
 For M31 it took 23 seconds, against about 5 minutes on the CPU. It halved the pixel noise (the robust sigma of neighbouring-pixel differences went from 0.000100 to 0.000048). The output matches GraXpert's own CPU result to within 1e-5, apart from a constant offset that GraXpert adds and the stretch removes.
+
+## deconv
+
+This stage is optional and off by default (`[deconv] strength = 0`). When it is off it is skipped, `stretch` reads `denoised.fits`, and nothing changes. When it is on, it runs GraXpert's object deconvolution AI model (version 1.0.1) on the denoised linear image and `stretch` reads `deconvolved.fits` instead. As with denoise, darkroom runs the model itself through onnxruntime on the GPU, with the same 512-pixel tiles and normalisation as GraXpert 3.1. The model is GraXpert's (CC BY-NC-SA 4.0) and is not part of darkroom: `darkroom deconv` asks GraXpert to download it the first time (or run `darkroom fetch-models --deconv`), and checks the file's size and SHA-256 before using it.
+
+The model needs the size of the stars. `[deconv] psf = "auto"`, the default, measures it from `denoised.fits`: it fits a Gaussian to a few hundred isolated, unsaturated stars and takes the sigma-clipped median FWHM. On M31 that gave 2.50 pixels from 252 stars in about a second; Siril's `findstar` on the green channel of the same file gives a median of 2.59. Give a number instead to override it.
+
+In a trial on M31, strength 0.5 with a PSF of 3.2 pixels made the dust lanes near the core slightly crisper and the stars slightly tighter, with no visible artefacts. The stage took about 20 to 25 seconds for 36 tiles on the Apple GPU. Too much strength shows as dark rings around bright stars and a crunchy, grainy sky; see the [checkpoint](../skill/SKILL.md) in the skill.
 
 ## stretch
 
