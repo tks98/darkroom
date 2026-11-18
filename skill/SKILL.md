@@ -186,6 +186,7 @@ What the main `finish` settings do, and what going too far looks like:
 | `mid` | <0.5 brightens the starless layer | core blows out, background lifts |
 | `sat` | overall saturation of the starless layer | noise turns into colour blotches |
 | `yb` | stretches yellow/blue differences inside the target only | core goes green-yellow, arms purple (seen at 2.6 on M31) |
+| `core` | lowers a near-white core, keeps its detail | flat, greyish core (0.4 on M31) |
 | `sharpen` | masked unsharp mask on the target | halos along dust lanes, grain |
 | `crop` | `"W:H"` (largest box of that shape centred on the brightest part of the target), or `"x,y,w,h"` | target touching the edge; use `crop_center` if the centre is wrong |
 
@@ -201,7 +202,7 @@ Two looks are shipped. Pass `--look` to `init`, or set `[target] look`.
 - `cluster`: for targets that are made of stars. StarNet would remove the
   target itself and star reduction would dim it, so the look sets
   `[finish] stars = "keep"`: StarNet is not run, and `gamma`,
-  `star_strength`, `yb`, `sharpen` and `erode` do nothing. It uses a stronger
+  `star_strength`, `yb`, `core`, `sharpen` and `erode` do nothing. It uses a stronger
   arcsinh stretch (100) so the core stays resolved. Made on M13 from 7.5
   minutes of data.
 

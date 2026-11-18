@@ -57,7 +57,7 @@ def test_target_center_ignores_a_single_bright_pixel():
 def test_recombine_aspect_crop_and_center_override():
     sl = blob_image()
     msgs = []
-    p = FinishParams(black=0.0, mid=0.5, sat=1.0, yb=1.0, sharpen=0.0, neutral=False, crop_aspect=(1, 1))
+    p = FinishParams(black=0.0, mid=0.5, sat=1.0, yb=1.0, core=0.0, sharpen=0.0, neutral=False, crop_aspect=(1, 1))
     out = fin.recombine(sl, sl, p, log=msgs.append)
     assert out.shape == (200, 200, 3)                       # box 0,110,200,200
     np.testing.assert_allclose(out, sl[100:300], atol=1e-6)     # 210 - 100 = 110, clamped to 300 - 200

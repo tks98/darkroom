@@ -2,6 +2,7 @@
 
 stars    = unscreen(original, starless)      # so screen(starless, stars) == original
 galaxy   = starless -> black point, midtone lift, saturation
+           -> core compression (core)               [bright core: lower, keep detail]
            -> yellow/blue contrast inside the galaxy (yb)   [core warmer, arms bluer]
            -> masked unsharp mask on luminance (sharpen)
 stars'   = stars ** gamma (optionally eroded) * star_strength
@@ -27,6 +28,7 @@ class FinishParams:
     mid: float = 0.45
     sat: float = 1.2
     yb: float = 1.8
+    core: float = 0.3                               # 0 = off; compresses the brightest part of the target
     sharpen: float = 0.8
     sharpen_radius: float = 2.0
     black: float = 0.02
@@ -74,6 +76,31 @@ def galaxy_mask(L, sky, sky_sigma):
     """0 on sky, ramps to 1 on the galaxy (smooth, from the starless luminance)."""
     m = (ndi.gaussian_filter(L, 4) - sky - 2 * sky_sigma) / (6 * sky_sigma)
     return np.clip(m, 0, 1)[..., None]
+
+
+CORE_KNEE = 0.55     # starless brightness (large scale) where core compression starts
+CORE_SIGMA = 12.0    # px; scale that counts as "large" (the bulge, not its detail)
+
+
+def compress_core(g, k):
+    """Two-scale compression of the brightest part of the starless layer, for a galaxy core
+    that the stretch has pushed close to white. The luminance is split into a smooth base
+    (Gaussian, CORE_SIGMA) and the detail on top of it (L / base). Where the base is above
+    CORE_KNEE, its excess is reduced by up to a factor (1 - k) at white, and the detail there is
+    raised to the power 1 + k so it is not flattened with it. Colour ratios are kept (every
+    channel is scaled by the same factor). Everything below the knee is untouched, apart from a
+    6 px blend at the edge of the compressed area. k = 0 returns g unchanged."""
+    if k <= 0:
+        return g
+    L = g.mean(-1) + 1e-6
+    base = ndi.gaussian_filter(L, CORE_SIGMA)
+    detail = L / np.maximum(ndi.gaussian_filter(L, CORE_SIGMA), 1e-6)
+    over = np.clip((base - CORE_KNEE) / (1 - CORE_KNEE), 0, 1)
+    newbase = np.where(base > CORE_KNEE, CORE_KNEE + (base - CORE_KNEE) * (1 - k * over ** 0.7), base)
+    ratio = newbase * detail ** (1 + k) / L
+    w = ndi.gaussian_filter((base > CORE_KNEE - 0.1).astype(np.float32), 6)
+    ratio = 1 + w * (ratio - 1)
+    return np.clip(g * ratio[..., None], 0, 1)
 
 
 def star_layer(stars, gamma, star_strength, erode=0):
@@ -200,6 +227,8 @@ def recombine(orig, sl, p: FinishParams, log=print):
     sky = np.median(L)                                     # most of the frame is sky
     sky_sig = 1.4826 * np.median(np.abs(L[L < np.percentile(L, 60)] - sky))
     gm = galaxy_mask(L, sky, max(sky_sig, 1e-3))
+
+    g = compress_core(g, p.core)
 
     if p.yb != 1.0:
         # opponent axis: yb = (R+G)/2 - B ; push it away from its galaxy median
