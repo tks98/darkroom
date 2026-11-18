@@ -13,6 +13,9 @@ VALUES = {
     "color.ssf": {"WORK": str(WORK), "FOCAL": "160", "PIXEL": "2.9", "CATALOG": "gaia",
                   "SENSOR": "Sony IMX585", "FILTER": "UV/IR Block"},
     "stretch.ssf": {"WORK": str(WORK), "ASINH": "25", "SHADOWS": "-2.5", "TARGET_BG": "0.1", "SAT": "0.35"},
+    "mosaic_solve.ssf": {"SUBS": "/data/M 31_sub", "PROCESS": str(WORK / "process"), "DARK": "/data/masters/dark.fit",
+                         "NODARK": "", "FORCE": "-force ", "FRAMES": "", "MAG": "13", "FOCAL": "150", "PIXEL": "2.9"},
+    "mosaic_stack.ssf": {"PROCESS": str(WORK / "process"), "STACK": str(WORK / "stack")},
 }
 
 

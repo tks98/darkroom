@@ -71,6 +71,22 @@ darkroom finish --work m31 --gamma 2.4 --out try_g24
 
 [Configuration](configuration.md#finish) shows what the main `finish` settings do and what they look like pushed too far.
 
+## Mosaics
+
+The Seestar's mosaic mode moves the mount between frames: a couple of frames at each pointing, dozens of pointings, covering a field bigger than the sensor. Normal registration matches every frame against one reference frame, so frames that do not overlap it are dropped. On a 151-frame Rosette mosaic that lost 58 frames, and `framing = max` left visible rectangles of different depth.
+
+`init` notices a mosaic from the pointings in the FITS headers (when they spread over more than a quarter of the field of view) and writes `[stack] mosaic = true`. `stack` warns when a mosaic is stacked without it. Use `--mosaic` or `--no-mosaic` to override it for one run. In mosaic mode `stack`:
+
+1. calibrates the frames as usual;
+2. fetches the Gaia stars for the whole field in one query from the ESA archive and splits them into the per-frame catalogue files Siril's plate solver reads, so solving needs no further downloads. If Siril still asks for a file darkroom did not predict, the [catalogue fallback](troubleshooting.md#plate-solving-fails-because-the-catalogue-server-is-down) fetches it and the frames that missed it are solved again;
+3. plate-solves every frame (using `[color] focal` and `pixel`); the solutions take the place of registration;
+4. keeps the best frames by sharpness and roundness, as usual, and stacks them onto one canvas that holds every frame, normalising each frame on the areas where frames overlap and feathering their edges, in 32-bit;
+5. crops the canvas to the largest rectangle that has data in every pixel. The plate solution is kept and moved with the crop. The uncropped canvas is kept as `stack_full.fit`.
+
+`stack` prints how many frames were solved and stacked, and the crop. On the Rosette mosaic, 139 of 151 frames were solved (most of the others had too few stars), 127 were stacked, and the 2452×4140 canvas was cropped to 2416×3905. On a 215-frame mosaic around Alnilam, whose pointings formed a diagonal band, 185 were solved, 173 stacked, and the crop kept 3737×2373 of a 5017×4582 canvas. When the crop throws away too much, start from `stack_full.fit` and crop it yourself.
+
+`--reuse-registration` restacks an already solved mosaic, for example with other `keep_*` settings. A mosaic needs more disk space than a normal stack, since the registered frames are 32-bit and as big as the whole canvas.
+
 ## Disk space and cleanup
 
 The `stack` stage writes calibrated and registered frames to `<work>/process`: about 80 MB per sub, so 31 GB for the 404 M31 subs. They are only needed to restack. Delete the folder when you are happy with the stack, or set `[stack] clean = true` to have it removed after every successful stack.

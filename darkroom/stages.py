@@ -54,13 +54,18 @@ def remove_process(work: Path, log=print) -> None:
 def stack(work: Path, subs: Path, dark: Path | None, framing: str = "min", keep_fwhm: float = 90,
           keep_round: float = 90, clean: bool = False, force: bool = False, reuse: bool = False,
           out: str = "stack", sub_glob: str = "*.fit", keep_bkg: float = 100,
-          keep_stars: float = 100) -> None:
+          keep_stars: float = 100, mosaic: bool = False, focal: float = 160.0, pixel: float = 2.9) -> None:
     """dark=None stacks without dark subtraction. ``reuse`` re-frames and re-stacks the
-    registered sequence already in <work>/process instead of starting from the subs."""
+    registered sequence already in <work>/process instead of starting from the subs.
+    ``mosaic`` plate-solves every frame (with ``focal`` and ``pixel``) instead of registering
+    them against one reference, stacks them onto one canvas (framing is always max) and crops
+    it to the area with data everywhere."""
     work = _abs(work)
     if Path(out).name != out:
         raise tools.StageError("--out is a basename inside the work directory, not a path")
     process = work / PROCESS
+    if mosaic:
+        framing = "max"
     values = {"PROCESS": str(process), "STACK": str(work / out),
               "FRAMING": framing, "KEEP_FWHM": siril.fmt_num(keep_fwhm), "KEEP_ROUND": siril.fmt_num(keep_round),
               "MAXIMIZE": "1" if framing == "max" else ""}
@@ -71,12 +76,14 @@ def stack(work: Path, subs: Path, dark: Path | None, framing: str = "min", keep_
         more += f"-filter-nbstars={siril.fmt_num(keep_stars)}% "
     if more:
         values["MORE_FILTERS"] = more
+    if mosaic:
+        del values["FRAMING"], values["MAXIMIZE"]
     if reuse:
         if force:
             raise tools.StageError("--force and --reuse-registration contradict each other")
         if not (process / "pp_light_.seq").is_file():
             raise tools.StageError(f"nothing to reuse: no registered sequence (pp_light_.seq) in {process}")
-        name = "restack.ssf"
+        name = "mosaic_stack.ssf" if mosaic else "restack.ssf"
     else:
         subs = _abs(subs)
         if not subs.is_dir():
@@ -102,17 +109,122 @@ def stack(work: Path, subs: Path, dark: Path | None, framing: str = "min", keep_
         siril_subs = subs
         if not os.access(subs, os.W_OK):
             siril_subs = stage_subs(subs, process)
-        values |= {"SUBS": str(siril_subs), "DARK": str(dark) if dark is not None else ""}
-        name = "stack.ssf"
+        sub_files = sorted(subs.glob("*.fit"))
+        if mosaic:
+            _mosaic_solve(work, sub_files, siril_subs, dark, focal, pixel)
+            name = "mosaic_stack.ssf"
+        else:
+            warn_if_mosaic(sub_files, focal, pixel)
+            values |= {"SUBS": str(siril_subs), "DARK": str(dark) if dark is not None else ""}
+            name = "stack.ssf"
     script = siril.render_file(name, work, values)
     log = tools.logs_dir(work) / "stack.log"
+    stacked = work / f"{out}.fit"
+    if mosaic:
+        stacked.unlink(missing_ok=True)       # so a failed run cannot leave the old crop looking current
     siril.run_script(script, log)
-    tools.check_outputs([work / f"{out}.fit"], log)
+    tools.check_outputs([stacked], log)
     kept = frames_kept(log)
     if kept:
         print(f"stack: {kept[0]} frames stacked" + (f" of {kept[1]}" if kept[1] else ""), flush=True)
+    if mosaic:
+        from . import mosaic as mo
+        with open(log, "a") as f:
+            def say(m):
+                print(m, flush=True)
+                f.write(f"[darkroom] {m}\n")
+            mo.crop_to_data(stacked, work / f"{out}_full.fit", log=say)
     if clean:
         remove_process(work)
+
+
+MOSAIC_SOLVE_LOG = "stack_solve.log"
+
+
+def solved_count(log_text: str) -> tuple[int, int] | None:
+    """(frames solved, frames included) from Siril's last seqplatesolve summary. Siril's
+    "successfully platesolved" count already includes frames that were solved before and skipped."""
+    m = re.findall(r"(\d+) images successfully platesolved out of (\d+) included", log_text)
+    if not m:
+        return None
+    done, total = map(int, m[-1])
+    return done, total
+
+
+def sequence_length(seq: Path) -> int:
+    """Number of images in a Siril .seq file (its 'S' line: name, start, number of images, ...)."""
+    for line in Path(seq).read_text(errors="replace").splitlines():
+        parts = line.split()
+        if len(parts) >= 4 and parts[0] == "S":
+            return int(parts[3])
+    raise tools.StageError(f"cannot read the number of images from {seq}")
+
+
+def _mosaic_solve(work: Path, sub_files: list[Path], siril_subs: Path, dark: Path | None,
+                  focal: float, pixel: float) -> None:
+    """Calibrate and plate-solve every frame of a mosaic: prefill Siril's catalogue cache from
+    the subs' headers, solve, and if Siril still could not get some catalogues, fetch those
+    and solve the remaining frames again."""
+    from . import catalog as cat, mosaic as mo
+    say = lambda m: print(m, flush=True)
+    try:
+        mo.prefill(sub_files, focal, pixel, mo.LIMIT_MAG, log=say)
+    except (tools.StageError, ValueError, OSError) as e:
+        say(f"mosaic: could not prefill the star catalogues ({e}); Siril will download them itself")
+    process = work / PROCESS
+    base = {"PROCESS": str(process), "MAG": siril.fmt_num(mo.LIMIT_MAG), "FOCAL": siril.fmt_num(focal),
+            "PIXEL": siril.fmt_num(pixel)}
+    first = siril.render_file("mosaic_solve.ssf", work, base | {
+        "SUBS": str(siril_subs), "DARK": str(dark) if dark is not None else "",
+        "NODARK": "" if dark is not None else "1", "FORCE": "-force ", "FRAMES": ""})
+    log = tools.logs_dir(work) / MOSAIC_SOLVE_LOG
+    error = None
+    try:
+        siril.run_script(first, log)
+    except tools.StageError as e:
+        error = e
+    text = log.read_text(errors="replace") if log.is_file() else ""
+    missing = cat.failed_requests(text)
+    if missing:
+        if not (process / "pp_light_.seq").is_file():
+            raise error or tools.StageError(f"calibration failed; see {log}")
+        kept = log.with_name("stack_solve.attempt1.log")
+        kept.write_text(text)
+        say(f"mosaic: Siril could not get the star catalogue for {len(missing)} pointing(s); "
+            "fetching them and solving the remaining frames again")
+        try:
+            cat.recover(text, log=say)
+        except tools.StageError as e:
+            say(f"mosaic: catalogue fallback failed ({e}); those frames stay unsolved")
+        else:
+            again = siril.render_file("mosaic_solve.ssf", work, base | {
+                "SUBS": "", "DARK": "", "NODARK": "", "FRAMES": str(sequence_length(process / "pp_light_.seq"))})
+            error = None
+            try:
+                siril.run_script(again, log)
+            except tools.StageError as e:
+                error = e
+            text = log.read_text(errors="replace")
+            with open(log, "a") as f:
+                f.write(f"[darkroom] second solve after the catalogue fallback; first log is {kept.name}\n")
+    n = solved_count(text)
+    if n is None or n[0] == 0:
+        detail = f"\n{error}" if error else ("\nlast lines of the log:\n" + tools.tail(log))
+        raise tools.StageError(f"mosaic: no frame was plate-solved (see {log}){detail}")
+    say(f"mosaic: {n[0]} of {n[1]} frames plate-solved")
+
+
+def warn_if_mosaic(sub_files: list[Path], focal: float, pixel: float) -> None:
+    """Warn when the subs' pointings say mosaic but [stack] mosaic is off."""
+    from . import mosaic as mo
+    try:
+        sp = mo.detect(sub_files, focal, pixel)
+    except Exception:           # a warning only: never fail a stack over it
+        return
+    if sp and sp.is_mosaic:
+        print(f"WARNING: these subs look like a mosaic ({sp.describe()}), but [stack] mosaic is off; "
+              "frames that do not overlap the reference frame will be dropped. Consider --mosaic.",
+              flush=True)
 
 
 STAGED_SUBS = "subs"
@@ -349,7 +461,8 @@ def result_params(stage: str, table: dict) -> dict:
                 "framing": table["framing"], "keep_fwhm": float(table["keep_fwhm"]),
                 "keep_round": float(table["keep_round"]),
                 # only recorded when in use, so work dirs made before these keys existed stay up to date
-                **{k: float(table[k]) for k in ("keep_bkg", "keep_stars") if float(table.get(k, 100)) < 100}}
+                **{k: float(table[k]) for k in ("keep_bkg", "keep_stars") if float(table.get(k, 100)) < 100},
+                **({"mosaic": True} if table.get("mosaic") else {})}
     out = {}
     for k in _RESULT_KEYS[stage]:
         v = table[k]
