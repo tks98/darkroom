@@ -18,6 +18,7 @@ from .finish import FinishParams, parse_center, parse_crop_spec
 
 CONFIG_NAME = "darkroom.toml"
 FRAMINGS = ("min", "cog", "max")
+MOSAIC_CROPS = ("rotate", "rect", "none")
 
 _F = FinishParams()
 
@@ -40,6 +41,7 @@ SCHEMA: dict[str, dict[str, tuple[str, object, str]]] = {
         "keep_stars": ("float", 100, "percent of frames kept by number of stars, most first (100 = no filter)"),
         "clean": ("bool", False, "delete <work>/process after a successful stack"),
         "mosaic": ("bool", False, "mosaic (many pointings): plate-solve each frame, stack onto one canvas (framing max), crop to the data"),
+        "mosaic_crop": ("str", "rotate", "rotate (largest rectangle with data everywhere at any angle) | rect (upright) | none"),
     },
     "bge": {
         "smoothing": ("float", 0.1, "GraXpert background smoothing"),
@@ -206,6 +208,8 @@ def _check(values: dict[str, dict[str, object]]) -> None:
     s = values["stack"]
     if s["framing"] not in FRAMINGS:
         raise ConfigError(f"[stack] framing should be one of {', '.join(FRAMINGS)}, got {s['framing']!r}")
+    if s["mosaic_crop"] not in MOSAIC_CROPS:
+        raise ConfigError(f"[stack] mosaic_crop should be one of {', '.join(MOSAIC_CROPS)}, got {s['mosaic_crop']!r}")
     for k in ("keep_fwhm", "keep_round", "keep_bkg", "keep_stars"):
         if not 0 < s[k] <= 100:
             raise ConfigError(f"[stack] {k} is a percentage (0 < value <= 100), got {s[k]!r}")

@@ -178,6 +178,9 @@ def _stack_args(o, run=False):
                "onto one canvas (framing is then max) and crop it to the area with data everywhere")
     g.add("--no-mosaic", dest="mosaic", action="store_false", key=("stack", "mosaic"),
           help="register and stack normally (overrides [stack] mosaic = true)")
+    o.add("--mosaic-crop", choices=config.MOSAIC_CROPS, default="rotate", key=("stack", "mosaic_crop"),
+          help="crop of a mosaic's canvas: rotate (the largest rectangle with data everywhere at any angle; "
+               "turns the image when that keeps 10%% more), rect (the largest upright one), none")
     g = o.parser.add_mutually_exclusive_group()
     g.add_argument("--force", action="store_true",
                    help="delete <work>/process from an earlier run first (otherwise that is an error)")
@@ -473,6 +476,7 @@ def _call(stage: str, work: Path, s: config.Settings, table: dict | None = None,
         stages.stack(work, table["subs"], table["dark"], table["framing"], table["keep_fwhm"],
                      table["keep_round"], table["clean"], sub_glob=table["sub_glob"],
                      keep_bkg=table["keep_bkg"], keep_stars=table["keep_stars"], mosaic=table["mosaic"],
+                     mosaic_crop=table["mosaic_crop"],
                      focal=s["color"]["focal"], pixel=s["color"]["pixel"], **extra)
     elif stage == "bge":
         stages.bge(work, s["bge"]["smoothing"])
