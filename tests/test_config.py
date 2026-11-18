@@ -37,7 +37,7 @@ def test_camera_preset_contents():
     assert meta["filters"] == {"IRCUT": "UV/IR Block", "LP": "ZWO Seestar LP"}
     assert meta["darks"] == config.DEFAULT_CAMERA_META["darks"]
     assert config.preset_names("cameras") == ["seestar-s30", "seestar-s30-pro"]
-    assert config.preset_names("looks") == ["cluster", "galaxy"]
+    assert config.preset_names("looks") == ["cluster", "galaxy", "nebula"]
 
 
 def test_precedence_flag_config_look_camera_builtin(tmp_path):
@@ -231,3 +231,12 @@ def test_finish_core_recorded_only_when_on():
             "crop_center": None}
     assert "core" not in stages.result_params("finish", base | {"core": 0.0})
     assert stages.result_params("finish", base | {"core": 0.3})["core"] == 0.3
+
+
+def test_nebula_look_resolves(tmp_path):
+    """The nebula look turns the yellow/blue push off, keeps StarNet and brightens the background."""
+    write(tmp_path, '[target]\nlook = "nebula"\n')
+    s = settings(tmp_path, "finish")
+    assert s["finish"]["yb"] == 1.0 and s["finish"]["stars"] == "reduce"
+    assert s["finish"]["sat"] == 1.5 and s.sources[("finish", "sat")] == "look preset nebula"
+    assert settings(tmp_path, "stretch")["stretch"]["target_bg"] == 0.15

@@ -115,7 +115,7 @@ Flags: `darkroom deconv --strength 0.5 --psf 3.2 --cpu`; `darkroom run --cpu` al
 | `target_bg` | 0.10 | autostretch target background level |
 | `sat` | 0.35 | Siril saturation amount |
 
-A low `asinh` gives a softer, flatter image with a brighter core. Higher values keep the core resolved and the star colours visible, but too high mottles the sky with colour noise. The galaxy look uses 25; the cluster look uses 100.
+A low `asinh` gives a softer, flatter image with a brighter core. Higher values keep the core resolved and the star colours visible, but too high mottles the sky with colour noise. The galaxy and nebula looks use 25; the cluster look uses 100.
 
 ## [starnet]
 
@@ -167,12 +167,13 @@ Past about 2.0 the field starts to look thinned out. `erode` shrinks stars with 
 
 ## Looks
 
-A look is a preset for `[stretch]` and `[finish]` (and the SPCC white reference). Two are shipped, in `presets/looks/`:
+A look is a preset for `[stretch]` and `[finish]` (and the SPCC white reference). Three are shipped, in `presets/looks/`:
 
 - `galaxy`, the default, comes from M31. StarNet removes the stars, the galaxy is enhanced, and the stars go back smaller.
 - `cluster` comes from M13 and is for targets made of stars. StarNet would remove the target itself and star reduction would dim it, so this look keeps the stars and skips StarNet. It stretches harder (`asinh = 100`) to keep the core resolved, and uses `sat = 1.3` and `black = 0.04`.
+- `nebula` comes from two Seestar S30 mosaics of emission nebulae, the Rosette and the Flame and Horsehead area, taken through the Seestar's dual-band LP filter. It turns the yellow/blue push off (`yb = 1`), because on the Rosette it turned the hydrogen-alpha red to orange. It stretches to a brighter background (`target_bg = 0.15`, `shadows = -2.8`) so the faint outer gas shows, and uses more saturation (`sat = 1.5`; 1.6 added colour noise to the sky), stronger star shrinking (`gamma = 1.8`) for star-rich Milky Way fields, a darker sky (`black = 0.04`), gentler sharpening (0.5) and `core = 0.2`.
 
-Each look was made from a single image, and the cluster look from only 7.5 minutes of data. If you are not sure which one a target needs, run the galaxy look once and open `starless.tif`: if the target has gone from it, use `stars = "keep"`. A nebula has no look yet.
+Each look was made from one or two images, and the cluster look from only 7.5 minutes of data. The nebula look's colour calibration used Siril's normal (broadband) mode with the LP filter's curve; it has not been tuned for a dual-band filter yet. If you are not sure which one a target needs, run the galaxy look once and open `starless.tif`: if the target has gone from it, use `stars = "keep"`.
 
 To make your own, copy a file from `presets/looks/`, change it, and point `look` at its path.
 
