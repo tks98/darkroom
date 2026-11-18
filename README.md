@@ -8,7 +8,7 @@ I wrote it to process a night of M31 from a ZWO Seestar S30 Pro, then turned tho
 
 ![M31, the Andromeda Galaxy, with satellite galaxies M32 (below the core) and M110 (upper right). The galaxy runs diagonally from upper left to lower right, with a warm yellow core, bluer outer arms and visible dark dust lanes, in a dense field of small stars.](docs/images/m31_final.jpg)
 
-M31 with M32 and M110. ZWO Seestar S30 Pro (160 mm focal length, Sony IMX585 one-shot-colour sensor, IR-cut filter, equatorial mode) at gain 200. 346 of 404 subs of 30 s kept, 2 h 53 min in total, on the night of 2026-11-15. Calibrated with the Seestar's own 5-frame master dark; no flats or bias.
+M31 with M32 and M110. ZWO Seestar S30 Pro (160 mm focal length, Sony IMX585 one-shot-colour sensor, IR-cut filter, equatorial mode) at gain 200. 346 of 404 subs of 30 s kept, 2 h 53 min in total, on the night of 2026-11-15. Calibrated with the Seestar's own 5-frame master dark; no flats or bias. Finished with the galaxy look and the optional deconvolution stage at strength 0.5; more targets and full-size crops are in the [gallery](docs/gallery.md).
 
 ## Compared with the Seestar's own stack
 
@@ -59,6 +59,7 @@ Setup ends with `darkroom doctor`, which checks every tool and prints a fix for 
 - [How it works](docs/pipeline.md): what each stage does, with numbers from M31.
 - [Troubleshooting](docs/troubleshooting.md): GraXpert on the GPU, the catalogue server, mismatched darks, StarNet and Gatekeeper.
 - [Using darkroom with an AI agent](docs/agents.md): the agent skill, for Claude Code or any agent that loads skills, and `AGENTS.md`.
+- [Gallery](docs/gallery.md): M31 and M13, with the settings used and full-size crops.
 - [History](docs/history.md): how darkroom was built and checked.
 
 ## Limitations
