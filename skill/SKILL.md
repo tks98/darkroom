@@ -122,9 +122,12 @@ cheap to fix at the stage that caused them and expensive to notice at the end.
   tiles of different brightness or colour, or steps along frame edges. The
   stack is 32-bit to avoid exactly that; if it shows anyway, stop and report.
 - Look at the crop it printed. `stack.fit` is the largest rectangle with data
-  everywhere; for an irregular mosaic it can be well under half the canvas
-  (39% on Alnilam). If the crop cuts the target, tell the user and offer to
-  crop `stack_full.fit` by hand instead.
+  everywhere. With the default `[stack] mosaic_crop = "rotate"` it may be
+  turned ("turned the ... canvas N deg"): on the diagonal Alnilam mosaic,
+  31.75 deg kept 69% of the pixels with data instead of 52% upright. North is
+  then no longer up; if the user wants it up, set `mosaic_crop = "rect"` and
+  restack with `--reuse-registration`. If the crop cuts the target, tell the
+  user and offer to crop `stack_full.fit` by hand instead.
 
 ### After `bge`
 - The background should be even. Measure the sky in a coarse grid away from

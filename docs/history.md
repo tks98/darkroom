@@ -69,3 +69,15 @@ A `deconv` stage between `denoise` and `stretch` runs GraXpert's object deconvol
 The model is GraXpert's, under CC BY-NC-SA 4.0, so it is not in the repository; GraXpert downloads it from its own server the first time the stage runs. `psf = "auto"` measures the star size from the denoised image: on M31 it gave a median FWHM of 2.50 pixels from 252 stars, against 2.59 from Siril's `findstar` on the green channel. An earlier hand-run trial had assumed 3.2.
 
 With strength 0.5 and a PSF of 3.2 pixels, the stage on the Apple GPU matched the same code on the CPU to 2e-6, and a hand-run prototype that used CoreML's default settings to at most 0.012 and 7e-7 on average. That trial made the dust lanes near the core slightly crisper and the stars slightly tighter. The stage takes about 20 to 25 seconds on M31.
+
+## Turned mosaic crops
+
+The Alnilam mosaic's pointings formed a diagonal band, and the largest upright rectangle with data everywhere, 3737×2373, kept 52% of the pixels with data (39% of the 5017×4582 canvas). Three ways to keep more were tried on that stack:
+
+- Turning the image before cropping. The best angle was 31.75° and the crop 4140×2814: 69% of the pixels with data, with all three belt stars, the Horsehead and the Flame Nebula inside. The search over angles and the resampling took 11 seconds. Turning resamples the image once more (cubic spline): stars came out about 2% wider and the noise was unchanged; bilinear resampling would have smoothed the noise by 13% and left a pattern in it. The plate solution is turned with the image; stars found in the result were within 0.04 pixels of where the canvas's solution put them.
+- Keeping the bounding box of the data (here the whole canvas, 26% of it empty) and filling the empty parts with a smooth background and matching noise. GraXpert's background extraction coped with it. But the finished picture still has to be a rectangle with data everywhere, so the fill only moves the crop to the end, and the filled areas would have to be tracked through every stage.
+- Doing nothing (`none`), for cropping by hand.
+
+Turning is now the default (`[stack] mosaic_crop = "rotate"`). It turns the image only when that keeps at least 10% more pixels than an upright crop, so the Rosette mosaic, which is nearly upright, is cropped exactly as before (2416×3905, 96% of the pixels with data) and ordinary stacks are not affected. `mosaic_crop = "rect"` keeps the old upright crop and north up. Work directories stacked before this setting existed are not re-cropped.
+
+On the turned Alnilam crop, GraXpert's background extraction gave a smooth model (3.5% from darkest to brightest) and a sky as even as on the upright crop: block medians within 0.5 to 1.3 times the noise per channel, against 0.5 to 1.2. Siril accepted the turned plate solution for colour calibration ("already plate solved"). SPCC itself was not checked: its spectral catalogue server was down that day, and Siril crashed when the download failed, on the upright crop too.
