@@ -109,6 +109,22 @@ cheap to fix at the stage that caused them and expensive to notice at the end.
   corners: it must be cropped, and its brightness scale differs from the
   others. To adopt a framing, set `[stack] framing` and restack.
 
+### After `stack` on a mosaic
+- `init` sets `[stack] mosaic = true` when the pointings in the headers
+  spread over more than a quarter of the field; `stack` warns when it looks
+  like a mosaic but the setting is off. Do not stack a mosaic without it.
+- Check "N of M frames plate-solved" and "frames stacked". On the Rosette
+  mosaic 139 of 151 solved and 127 were stacked; the unsolved ones were mostly
+  frames with few stars. Far fewer solved means a wrong `[color] focal` or
+  `pixel`, or catalogues that could not be fetched (`logs/stack_solve.log`).
+- Look at a quick stretch of `stack_full.fit` (the whole canvas) for seams:
+  tiles of different brightness or colour, or steps along frame edges. The
+  stack is 32-bit to avoid exactly that; if it shows anyway, stop and report.
+- Look at the crop it printed. `stack.fit` is the largest rectangle with data
+  everywhere; for an irregular mosaic it can be well under half the canvas
+  (39% on Alnilam). If the crop cuts the target, tell the user and offer to
+  crop `stack_full.fit` by hand instead.
+
 ### After `bge`
 - The background should be even. Measure the sky in a coarse grid away from
   the target; the blocks should agree within a few percent.

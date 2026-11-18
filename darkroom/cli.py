@@ -165,6 +165,12 @@ def _stack_args(o, run=False):
           help="percent of frames kept by number of stars detected, most first")
     o.add("--clean", action="store_true", key=("stack", "clean"),
           help="delete <work>/process after a successful stack")
+    g = o.group(o.parser.add_mutually_exclusive_group())
+    g.add("--mosaic", dest="mosaic", action="store_true", key=("stack", "mosaic"),
+          help="the subs are a mosaic: plate-solve every frame instead of registering against one, stack "
+               "onto one canvas (framing is then max) and crop it to the area with data everywhere")
+    g.add("--no-mosaic", dest="mosaic", action="store_false", key=("stack", "mosaic"),
+          help="register and stack normally (overrides [stack] mosaic = true)")
     g = o.parser.add_mutually_exclusive_group()
     g.add_argument("--force", action="store_true",
                    help="delete <work>/process from an earlier run first (otherwise that is an error)")
@@ -263,7 +269,8 @@ def _finish_params(a) -> FinishParams:
 
 INIT_HELP = """\
 Reads the FITS headers of the subs (object, exposure, gain, filter, sensor
-temperature, focal length, pixel size, Bayer pattern) and writes
+temperature, focal length, pixel size, Bayer pattern, and the pointing of each
+frame to tell whether the subs are a mosaic) and writes
 <work>/darkroom.toml with every setting listed and commented. Site coordinates
 and the telescope/device name in the headers are never stored, printed or
 written.
@@ -405,7 +412,13 @@ def _stack_table(s: config.Settings) -> dict:
         dark = dark.resolve()
     else:
         dark = Path(t["dark"]).expanduser().resolve()
-    return {"subs": subs, "dark": dark, "sub_glob": glob, **s["stack"]}
+    table = {"subs": subs, "dark": dark, "sub_glob": glob, **s["stack"]}
+    if table["mosaic"] and table["framing"] != "max":
+        if s.sources[("stack", "framing")] != "built-in":
+            print(f"WARNING: [stack] framing = {table['framing']} ({s.sources[('stack', 'framing')]}) is "
+                  "ignored: a mosaic is always stacked with framing max", flush=True)
+        table["framing"] = "max"
+    return table
 
 
 def _starnet_dir(s: config.Settings):
@@ -417,7 +430,8 @@ def _call(stage: str, work: Path, s: config.Settings, table: dict | None = None,
     if stage == "stack":
         stages.stack(work, table["subs"], table["dark"], table["framing"], table["keep_fwhm"],
                      table["keep_round"], table["clean"], sub_glob=table["sub_glob"],
-                     keep_bkg=table["keep_bkg"], keep_stars=table["keep_stars"], **extra)
+                     keep_bkg=table["keep_bkg"], keep_stars=table["keep_stars"], mosaic=table["mosaic"],
+                     focal=s["color"]["focal"], pixel=s["color"]["pixel"], **extra)
     elif stage == "bge":
         stages.bge(work, s["bge"]["smoothing"])
     elif stage == "color":
@@ -544,6 +558,15 @@ def _init(a) -> None:
     want = meta["camera"].get("bayer")
     if want and sv.bayer and want != sv.bayer:
         notes.append(f"Bayer pattern in the header is {sv.bayer}, the camera preset says {want}")
+    from . import mosaic
+    sp = mosaic.detect(files, sv.focal or base["color"]["focal"], sv.pixel or base["color"]["pixel"])
+    mosaic_line = None
+    if sp and sp.is_mosaic:
+        ordered[("stack", "mosaic")] = True
+        mosaic_line = f"yes: {sp.describe()}"
+        notes.append("the subs look like a mosaic (the mount moved between frames), so [stack] mosaic = true: "
+                     "every frame is plate-solved and stacked onto one canvas, cropped to the area with data; "
+                     "set it to false to register and stack as usual")
     if len(sv.exposures) > 1:
         notes.append("the subs have more than one exposure time: " + ", ".join(f"{e:g} s" for e in sv.exposures))
     if len(sv.gains) > 1:
@@ -569,10 +592,11 @@ def _init(a) -> None:
         ("camera", f"{camera} ({how})" if camera else "no preset"),
         ("look", a.look),
         ("dark", dark_line),
-    ]
+    ] + ([("mosaic", mosaic_line)] if mosaic_line else [])
     head = [f"darkroom.toml for {name or 'a new target'}, written by `darkroom init`.",
             f"Subs: {sv.count} x {exposure}; gain {summary[3][1]}; filter {', '.join(sv.filters) or '?'}; "
-            f"sensor {temp()}."]
+            f"sensor {temp()}."] + ([f"Mosaic detected from the pointings in the headers ({sp.describe()})."]
+                                    if mosaic_line else [])
     effective = config.resolve(work, None, dict(ordered), use_file=False)
     work.mkdir(parents=True, exist_ok=True)
     dest.write_text(config.render_config(ordered, effective, head))
@@ -605,7 +629,8 @@ def _run(a) -> None:
             same = False
             if old is not None and t["subs"]:
                 now = stages.result_params("stack", {"subs": Path(t["subs"]).expanduser().resolve(),
-                                                     "dark": old.get("dark"), **s["stack"]})
+                                                     "dark": old.get("dark"), **s["stack"],
+                                                     **({"framing": "max"} if s["stack"]["mosaic"] else {})})
                 same = now == old
             if force_all or not same or not all(p.is_file() for p in stages.outputs(a.work, "stack")):
                 raise

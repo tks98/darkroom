@@ -101,13 +101,20 @@ def survey(files: list[Path]) -> Survey:
 
 def detect_camera(first_sub: Path, presets: dict[str, dict]) -> str | None:
     """Name of the camera preset whose match text appears in its match keyword, if any.
-    ``presets`` maps preset name -> its [camera] table."""
+    ``presets`` maps preset name -> its [camera] table. A preset whose text equals the
+    keyword's value wins; otherwise the longest matching text does, so "ZWO Seestar S30"
+    does not claim the subs of a "ZWO Seestar S30 Pro"."""
     h = _header(first_sub)
+    hits = []
     for name, cam in sorted(presets.items()):
         key, text = cam.get("match_keyword"), cam.get("match")
-        if key and text and text.lower() in str(h.get(key, "")).lower():
-            return name
-    return None
+        value = str(h.get(key, "")).strip().lower() if key else ""
+        if key and text and text.strip().lower() in value:
+            hits.append((value == text.strip().lower(), len(text.strip()), name))
+    if not hits:
+        return None
+    best = max(hit[:2] for hit in hits)
+    return next(n for exact, length, n in hits if (exact, length) == best)
 
 
 # ------------------------------------------------------------- dark selection

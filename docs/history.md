@@ -45,3 +45,14 @@ An open-source alternative, starrem2k13 (MIT), was also tried on the same image 
 The full M31 run was repeated in the Docker image under emulation on Apple Silicon. Siril's colour calibration crashed there (see [Docker](docker.md#colour-calibration-crashes-under-emulation)), so that stage ran natively; every other stage ran in the container. The result matched the native one to 0.04 of an 8-bit level on average. Two things turned up along the way: Siril on Linux will not `cd` into a read-only folder, so `stack` now links the subs into the work folder when needed, and Siril's AppImage only finds its Python module when `APPDIR` is set.
 
 After that, the image's role was narrowed. Running the Mac pipeline inside Docker is slow and loses the GPU, so the image became the way darkroom is delivered on Linux and Windows, and a native installer, `darkroom setup`, took over on the Mac: it downloads the official Siril and GraXpert builds, checks them against pinned hashes, and marks them for Gatekeeper the way a browser would. Siril's Mac build is notarized; GraXpert's is not, so `setup` asks before installing it and leaves the decision to allow it with the user.
+
+## Mosaics and the Seestar S30
+
+A Rosette Nebula mosaic from the original Seestar S30 (151 frames of 60 seconds at 86 pointings, about 1.5 × 2.5 degrees) showed that registering against one reference frame does not work for mosaics: 58 frames were dropped, and `framing = max` left rectangles of different depth. `[stack] mosaic` plate-solves every frame instead and stacks onto one canvas; see [mosaics](usage.md#mosaics).
+
+Three things had to be found out by hand first. Registered frames must be 32-bit: in 16-bit, Siril's overlap normalisation logged thousands of overflow errors and the mosaic came out as a patchwork of differently coloured tiles. Siril's catalogue server was timing out, and one download per frame would have meant minutes of timeouts, so darkroom fetches the stars for the whole field in one query and writes them where Siril looks; Siril then solved without network access. And `seqplatesolve` drops the frames it cannot solve from the selection, so a second solve after the catalogue fallback has to select them again.
+
+On the Rosette, 139 of 151 frames were solved and 127 stacked, with no visible seams. A 215-frame Alnilam mosaic gave 185 solved and 173 stacked. Colour calibration on the Rosette mosaic used 1615 stars but called its fit imprecise. Ordinary stacks are unchanged.
+
+The same work added a camera preset for the original S30 (`seestar-s30`: 150 mm, its own SPCC sensor entry). Camera detection now prefers an exact match of the header value and otherwise the longest matching text, so the S30 preset does not claim S30 Pro subs.
+

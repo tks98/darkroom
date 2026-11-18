@@ -1,0 +1,22 @@
+############################################
+# darkroom: frame and stack a plate-solved mosaic (Siril 1.4)
+# Rendered by `darkroom stack` when [stack] mosaic is on, after mosaic_solve.ssf
+# (and for --reuse-registration). Template syntax: see darkroom/siril.py.
+############################################
+requires 1.4.0
+setext fit
+# 32-bit registered frames: with 16-bit ones, -overlap_norm overflows the type
+# conversion and the mosaic comes out as tiles of different colour
+set32bits
+
+cd "{{PROCESS}}"
+# 4. Apply the plate solutions onto one canvas that holds every frame (-framing=max),
+#    keeping the best frames by weighted FWHM and roundness
+seqapplyreg pp_light -filter-wfwhm={{KEEP_FWHM=90}}% -filter-round={{KEEP_ROUND=90}}% {{MORE_FILTERS=}}-framing=max
+
+# 5. Stack: as stack.ssf, plus -overlap_norm (normalise the frames on the areas
+#    where they overlap, so the tiles match), -feather (blend frame edges, in
+#    pixels) and -maximize (the whole canvas)
+stack r_pp_light rej w 3 3 -norm=addscale -overlap_norm -output_norm -weight=wfwhm -feather={{FEATHER=40}} -maximize -32b "-out={{STACK}}"
+
+close

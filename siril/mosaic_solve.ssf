@@ -1,0 +1,29 @@
+############################################
+# darkroom: calibrate and plate-solve the frames of a mosaic (Siril 1.4)
+# Rendered by `darkroom stack` when [stack] mosaic is on. The frames are taken at
+# many pointings, so instead of matching stars against one reference frame
+# (`register`), every frame is plate-solved; the solutions are the registration.
+# The first run calibrates and solves everything (-force); darkroom reruns only
+# the solve, without -force, if some catalogue downloads failed and it fetched
+# them itself. Template syntax: see darkroom/siril.py.
+############################################
+requires 1.4.0
+setext fit
+set16bits
+
+# 1-2. Link the raw lights and calibrate them, as stack.ssf does (first run only)
+{{if SUBS}}cd "{{SUBS}}"
+{{if SUBS}}link light "-out={{PROCESS}}"
+cd "{{PROCESS}}"
+{{if DARK}}calibrate light "-dark={{DARK}}" -cc=dark 3 3 -cfa -equalize_cfa -debayer
+{{if NODARK}}calibrate light -cfa -equalize_cfa -debayer
+
+# On the rerun: seqplatesolve deselects the frames it could not solve; select them all
+# again so the frames whose catalogue was missing get another try
+{{if FRAMES}}select pp_light 1 {{FRAMES}}
+
+# 3. Plate-solve each frame against Gaia, starting from its header RA/DEC
+#    (-nocache: one catalogue per frame, which darkroom prefilled)
+seqplatesolve pp_light -catalog=gaia -nocache {{FORCE=}}-limitmag={{MAG}} -focal={{FOCAL}} -pixelsize={{PIXEL}} -order=2
+
+close

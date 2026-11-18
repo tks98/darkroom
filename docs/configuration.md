@@ -39,6 +39,7 @@ The Seestar's sensor is not cooled, so this matters more than it would with a co
 | `keep_bkg` | 100 (off) | percent of frames kept, darkest sky first |
 | `keep_stars` | 100 (off) | percent of frames kept, most stars first |
 | `clean` | false | delete `<work>/process` after a successful stack |
+| `mosaic` | false (`init` turns it on for a mosaic) | plate-solve every frame and stack them onto one canvas; see [mosaics](usage.md#mosaics) |
 
 ### Framing
 
@@ -55,6 +56,8 @@ darkroom stack --work m31 --reuse-registration --framing cog --out stack_cog
 ```
 
 To adopt one, set `[stack] framing` and restack.
+
+With `mosaic = true` the framing is always `max`, followed by a crop to the largest rectangle with data everywhere. A `framing` set to something else is ignored with a warning.
 
 ### Frame selection
 
@@ -160,4 +163,4 @@ To make your own, copy a file from `presets/looks/`, change it, and point `look`
 
 ## Cameras
 
-One camera preset is shipped: `seestar-s30-pro`. `init` detects it from the `CREATOR` keyword in the FITS header. Besides the `[color]` values, it records the Bayer pattern (GRBG), which files count as subs (`Light_*.fit`), how the Seestar names master darks, and the filter-name mapping.
+Two camera presets are shipped: `seestar-s30-pro` (160 mm, Sony IMX585) and `seestar-s30` for the original S30 (150 mm, Siril's `ZWO Seestar S30` sensor entry). `init` detects them from the `CREATOR` keyword in the FITS header; a preset whose text equals the header value wins, otherwise the longest matching text, so S30 Pro subs never get the S30 preset. Besides the `[color]` values, each records the Bayer pattern (GRBG), which files count as subs (`Light_*.fit`), how the Seestar names master darks, and the filter-name mapping.

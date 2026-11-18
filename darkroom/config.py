@@ -39,6 +39,7 @@ SCHEMA: dict[str, dict[str, tuple[str, object, str]]] = {
         "keep_bkg": ("float", 100, "percent of frames kept by background level, darkest first (100 = no filter; lower it to drop cloud)"),
         "keep_stars": ("float", 100, "percent of frames kept by number of stars, most first (100 = no filter)"),
         "clean": ("bool", False, "delete <work>/process after a successful stack"),
+        "mosaic": ("bool", False, "mosaic (many pointings): plate-solve each frame, stack onto one canvas (framing max), crop to the data"),
     },
     "bge": {
         "smoothing": ("float", 0.1, "GraXpert background smoothing"),
