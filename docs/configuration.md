@@ -135,6 +135,7 @@ darkroom looks for StarNet in this order: `--starnet-dir`, `[starnet] dir`, `$DA
 | `mid` | 0.45 | midtone; below 0.5 brightens |
 | `sat` | 1.2 | saturation |
 | `yb` | 1.8 | yellow and blue contrast inside the target (1 is off) |
+| `core` | 0.3 | compress the brightest part of the target, keeping its detail (0 is off) |
 | `sharpen` | 0.8 | sharpening of the target |
 | `sharpen_radius` | 2.0 | sharpening radius in pixels |
 | `black` | 0.02 | black point |
@@ -157,6 +158,8 @@ Past about 2.0 the field starts to look thinned out. `erode` shrinks stars with 
 ### Colour and sharpening
 
 `yb` pushes yellow and blue apart inside the target only, which makes a galaxy's warm core and bluer arms easier to tell apart. It is cosmetic, not measured colour. On M31, 1.8 looked right; 2.6 turned the core green-yellow and the arms purple. `sharpen` applies an unsharp mask to the target's brightness, with the sky masked off so its noise is left alone. Too much puts halos along dust lanes.
+
+`core` is for a bright galaxy core that the stretch has pushed close to white. It splits the target's brightness into a smooth base and the detail on top of it, lowers the base where it is above 55% brightness, and keeps the detail, so the core fades smoothly instead of flattening into a white disc. Colours keep their ratios, and nothing below the threshold changes. On M31 at 0.3, no pixel in the centre is clipped any more (before, 7% of the centre 60 pixels across was at 98% brightness or more), M110's core is tamed the same way, and about 2% of the image changes. At 0.4 the core starts to look flat and greyish. It cannot show structure the data does not have: at the Seestar's 4 arcseconds per pixel, M31's core is a smooth bulge.
 
 ### Cropping
 

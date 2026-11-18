@@ -452,7 +452,7 @@ def finish_params(f: dict) -> FinishParams:
     kind, value = parse_crop_spec(f.get("crop"))
     center = parse_center(f["crop_center"]) if f.get("crop_center") else None
     return FinishParams(gamma=f["gamma"], star_strength=f["star_strength"], mid=f["mid"], sat=f["sat"],
-                        yb=f["yb"], sharpen=f["sharpen"], sharpen_radius=f["sharpen_radius"],
+                        yb=f["yb"], core=f["core"], sharpen=f["sharpen"], sharpen_radius=f["sharpen_radius"],
                         black=f["black"], erode=f["erode"], neutral=f["neutral"],
                         crop=value if kind == "box" else None,
                         crop_aspect=value if kind == "aspect" else None,
@@ -500,6 +500,8 @@ def result_params(stage: str, table: dict) -> dict:
         # recorded only when in use, so work dirs made before these keys existed stay up to date
         if table.get("stars", "reduce") != "reduce":
             out["stars"] = table["stars"]
+        if float(table.get("core", 0.0)) != 0.0:
+            out["core"] = float(table["core"])   # finals made before core existed had none: rerun them
         if aspect and float(table.get("crop_scale", 1.0)) != 1.0:
             out["crop_scale"] = float(table["crop_scale"])
     return out

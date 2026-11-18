@@ -77,6 +77,7 @@ SCHEMA: dict[str, dict[str, tuple[str, object, str]]] = {
         "mid": ("float", _F.mid, "midtone on the starless layer (<0.5 brightens)"),
         "sat": ("float", _F.sat, "saturation on the starless layer"),
         "yb": ("float", _F.yb, ">1 stretches yellow/blue differences inside the galaxy (cosmetic)"),
+        "core": ("float", _F.core, "compress the brightest part of the target, keeping its detail (0 = off)"),
         "sharpen": ("float", _F.sharpen, "unsharp-mask amount on the galaxy luminance"),
         "sharpen_radius": ("float", _F.sharpen_radius, "unsharp-mask Gaussian sigma (px)"),
         "black": ("float", _F.black, "black point lift on the starless layer"),

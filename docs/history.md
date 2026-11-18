@@ -56,6 +56,11 @@ On the Rosette, 139 of 151 frames were solved and 127 stacked, with no visible s
 
 The same work added a camera preset for the original S30 (`seestar-s30`: 150 mm, its own SPCC sensor entry). Camera detection now prefers an exact match of the header value and otherwise the longest matching text, so the S30 preset does not claim S30 Pro subs.
 
+## Core compression
+
+Another model's review of the M31 result said the core was close to a flat white blob. It was: 7% of the centre 60 pixels across was at 98% brightness or more. `[finish] core` compresses the brightest part of the target before the stars go back in, and the `galaxy` look sets it to 0.3. This deliberately changes the M31 result: about 2% of the pixels move by more than 1/255, all in the core of M31 and of M110, and the centre is no longer clipped. With `core = 0` the output matches the previous result to within 1/255. Work directories finished before this setting existed rerun `finish` once, because `core` is recorded whenever it is on.
+
+The same review suggested pulling the outer disk toward blue and denoising harder. Neither was adopted. The disk colour is what SPCC measured, and `yb` already exaggerates it. Denoise at strength 0.8 instead of 0.6 cut pixel-level grain in the outer disk by 14% but did not reduce the blotchy mottling there (it rose slightly), which comes from too little integration time rather than from noise a denoiser removes.
 
 ## Optional deconvolution
 
