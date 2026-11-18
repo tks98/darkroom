@@ -40,6 +40,26 @@ xattr -dr com.apple.quarantine path/to/StarNetv2CLI_MacOS
 
 Siril refuses to `cd` into a folder it cannot write to, even though darkroom never writes there. When the subs folder is read-only (as in the Docker image, where it is mounted read-only), `stack` makes `<work>/process/subs/` with a link to each sub and points Siril at that instead. Nothing needs doing; this is here in case you see that folder.
 
+## "Python quit unexpectedly" every time Siril runs
+
+On macOS 27 with Siril 1.4.5, every `siril-cli` run can pop up a "Python quit unexpectedly" dialog, so a darkroom run brings a burst of them. The crash report names Siril's bundled Python (`Siril.app/Contents/Frameworks/Python.framework/.../Python`) and says `Code Signature Invalid` and `Launch Constraint Violation`.
+
+When it starts, Siril runs the Python in its own virtual environment to check it, and that Python is a link to the copy inside Siril.app, which macOS refuses to run. It is a Siril bug ([free-astro/siril#1957](https://gitlab.com/free-astro/siril/-/issues/1957)). darkroom's results are not affected: Siril's stacking, plate solving and colour calibration do not use that Python, and every stage finishes normally. Siril's own Python scripts cannot run while the bug is there.
+
+The workaround is to point Siril's virtual environment at another Python 3.12, for example Homebrew's (`brew install python@3.12`). Back the environment up first:
+
+```sh
+V="$HOME/Library/Application Support/org.siril.Siril/siril/venv"
+cp -Rp "$V" "$V.backup"
+ln -sfn /opt/homebrew/opt/python@3.12/bin/python3.12 "$V/bin/python3.12"
+sed -i '' -e 's|^home = .*|home = /opt/homebrew/opt/python@3.12/bin|' \
+          -e 's|^executable = .*|executable = /opt/homebrew/opt/python@3.12/bin/python3.12|' "$V/pyvenv.cfg"
+```
+
+On the machine darkroom is developed on, this stopped the crashes: four Siril runs and a darkroom stage afterwards produced no crash reports, and Siril kept the change. A Siril update may rebuild the environment and bring the crash back; if so, run the same commands again. Removing Homebrew's `python@3.12` breaks the link; patch upgrades do not. To undo, move `$V.backup` back to `$V`.
+
+If you would rather not touch Siril's files, `defaults write com.apple.CrashReporter DialogType notification` turns the dialogs into notifications (`defaults delete com.apple.CrashReporter DialogType` undoes it).
+
 ## `siril-cli` cannot find the script
 
 `siril-cli` starts in `~/Pictures`, so a script passed by a relative path is not found, and so are relative paths inside it. darkroom passes everything as absolute paths. This only matters if you run the scripts in `siril/` by hand.

@@ -274,6 +274,14 @@ emulation on Apple Silicon, Siril's colour calibration (SPCC) crashes; run
 the `color` stage natively there, or use the image on an x86-64 machine. See
 `docs/docker.md`.
 
+### "Python quit unexpectedly" on every Siril run
+
+On macOS 27, Siril 1.4.5's bundled Python is killed by a code-signing launch
+constraint each time `siril-cli` starts (Siril bug #1957), and macOS shows a
+crash dialog. darkroom's results are not affected; do not stop the run. The
+workaround, pointing Siril's venv at another Python 3.12, changes Siril's own
+files: explain it from `docs/troubleshooting.md` and let the user decide.
+
 ### Shell is often zsh
 
 Unquoted variables are not split into words; quote paths (the Seestar's

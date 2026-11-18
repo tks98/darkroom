@@ -57,7 +57,7 @@ Setup ends with `darkroom doctor`, which checks every tool and prints a fix for 
 - [Using darkroom](docs/usage.md): `init` and `run`, single stages, what to check after each stage, comparing variants, disk space.
 - [Configuration](docs/configuration.md): every setting with its default, dark selection, framing, star reduction, cropping, and the galaxy and cluster looks.
 - [How it works](docs/pipeline.md): what each stage does, with numbers from M31.
-- [Troubleshooting](docs/troubleshooting.md): GraXpert on the GPU, the catalogue server, mismatched darks, StarNet and Gatekeeper.
+- [Troubleshooting](docs/troubleshooting.md): GraXpert on the GPU, the catalogue server, mismatched darks, StarNet and Gatekeeper, Siril's Python crashing on macOS.
 - [Using darkroom with an AI agent](docs/agents.md): the agent skill, for Claude Code or any agent that loads skills, and `AGENTS.md`.
 - [Gallery](docs/gallery.md): M31 and M13, with the settings used and full-size crops.
 - [History](docs/history.md): how darkroom was built and checked.
