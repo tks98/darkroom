@@ -7,6 +7,9 @@ Template syntax (deliberately tiny):
   {{if NAME}}line     keep ``line`` only when NAME has a non-empty value
   {{ifnot NAME}}line  keep ``line`` only when NAME is missing or empty
 
+Conditions can be chained at the start of a line (``{{if A}}{{ifnot B}}line``); the
+line is kept only when all of them hold.
+
 Values must not contain double quotes (Siril scripts cannot quote them).
 """
 from __future__ import annotations
@@ -37,15 +40,14 @@ def render(template: str, values: dict[str, str]) -> str:
     """Replace placeholders. Every required placeholder must have a value, every value a use."""
     lines, cond_names = [], set()
     for line in template.splitlines(keepends=True):
-        m = _COND.match(line)
-        if m:
+        keep = True
+        while m := _COND.match(line):
             kind, name = m.groups()
             cond_names.add(name)
-            on = bool(values.get(name))
-            if (kind == "if") != on:
-                continue
+            keep = keep and (kind == "if") == bool(values.get(name))
             line = line[m.end():]
-        lines.append(line)
+        if keep:
+            lines.append(line)
     body = "".join(lines)
 
     required, optional = set(), set()

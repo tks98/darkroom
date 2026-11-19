@@ -56,8 +56,9 @@ def stack(work: Path, subs: Path, dark: Path | None, framing: str = "min", keep_
           keep_round: float = 90, clean: bool = False, force: bool = False, reuse: bool = False,
           out: str = "stack", sub_glob: str = "*.fit", keep_bkg: float = 100,
           keep_stars: float = 100, mosaic: bool = False, focal: float = 160.0, pixel: float = 2.9,
-          mosaic_crop: str = "rotate") -> None:
-    """dark=None stacks without dark subtraction. ``reuse`` re-frames and re-stacks the
+          mosaic_crop: str = "rotate", bias: Path | None = None, flat: Path | None = None) -> None:
+    """dark=None stacks without dark subtraction. ``bias`` (used only without a dark: the dark
+    contains the bias) and ``flat`` are master files too. ``reuse`` re-frames and re-stacks the
     registered sequence already in <work>/process instead of starting from the subs.
     ``mosaic`` plate-solves every frame (with ``focal`` and ``pixel``) instead of registering
     them against one reference, stacks them onto one canvas (framing is always max) and crops
@@ -97,9 +98,15 @@ def stack(work: Path, subs: Path, dark: Path | None, framing: str = "min", keep_
         if extra:
             print(f"WARNING: {len(extra)} .fit file(s) in {subs} do not match {sub_glob} "
                   f"(e.g. {sorted(extra)[0]}); Siril stacks every .fit in the folder", flush=True)
-        if dark is not None:
-            dark = _abs(dark)
-            tools.require_file(dark, "master dark")
+        if dark is not None and bias is not None:
+            raise tools.StageError("the lights are calibrated with a master dark or a master bias, not both")
+        masters = {}
+        for kind, path in (("dark", dark), ("bias", bias), ("flat", flat)):
+            if path is not None:
+                masters[kind] = tools.require_file(_abs(path), f"master {kind}")
+        dark, bias, flat = masters.get("dark"), masters.get("bias"), masters.get("flat")
+        calib = {"DARK": str(dark) if dark else "", "BIAS": str(bias) if bias else "",
+                 "FLAT": str(flat) if flat else ""}
         if _has_sequence(process):
             if not force:
                 raise tools.StageError(
@@ -113,11 +120,11 @@ def stack(work: Path, subs: Path, dark: Path | None, framing: str = "min", keep_
             siril_subs = stage_subs(subs, process)
         sub_files = sorted(subs.glob("*.fit"))
         if mosaic:
-            _mosaic_solve(work, sub_files, siril_subs, dark, focal, pixel)
+            _mosaic_solve(work, sub_files, siril_subs, calib, focal, pixel)
             name = "mosaic_stack.ssf"
         else:
             warn_if_mosaic(sub_files, focal, pixel)
-            values |= {"SUBS": str(siril_subs), "DARK": str(dark) if dark is not None else ""}
+            values |= {"SUBS": str(siril_subs), **calib}
             name = "stack.ssf"
     script = siril.render_file(name, work, values)
     log = tools.logs_dir(work) / "stack.log"
@@ -167,7 +174,7 @@ def sequence_length(seq: Path) -> int:
     raise tools.StageError(f"cannot read the number of images from {seq}")
 
 
-def _mosaic_solve(work: Path, sub_files: list[Path], siril_subs: Path, dark: Path | None,
+def _mosaic_solve(work: Path, sub_files: list[Path], siril_subs: Path, calib: dict[str, str],
                   focal: float, pixel: float) -> None:
     """Calibrate and plate-solve every frame of a mosaic: prefill Siril's catalogue cache from
     the subs' headers, solve, and if Siril still could not get some catalogues, fetch those
@@ -182,8 +189,7 @@ def _mosaic_solve(work: Path, sub_files: list[Path], siril_subs: Path, dark: Pat
     base = {"PROCESS": str(process), "MAG": siril.fmt_num(mo.LIMIT_MAG), "FOCAL": siril.fmt_num(focal),
             "PIXEL": siril.fmt_num(pixel)}
     first = siril.render_file("mosaic_solve.ssf", work, base | {
-        "SUBS": str(siril_subs), "DARK": str(dark) if dark is not None else "",
-        "NODARK": "" if dark is not None else "1", "FORCE": "-force ", "FRAMES": ""})
+        "SUBS": str(siril_subs), **calib, "FORCE": "-force ", "FRAMES": ""})
     log = tools.logs_dir(work) / MOSAIC_SOLVE_LOG
     error = None
     try:
@@ -205,7 +211,7 @@ def _mosaic_solve(work: Path, sub_files: list[Path], siril_subs: Path, dark: Pat
             say(f"mosaic: catalogue fallback failed ({e}); those frames stay unsolved")
         else:
             again = siril.render_file("mosaic_solve.ssf", work, base | {
-                "SUBS": "", "DARK": "", "NODARK": "", "FRAMES": str(sequence_length(process / "pp_light_.seq"))})
+                "SUBS": "", "DARK": "", "FRAMES": str(sequence_length(process / "pp_light_.seq"))})
             error = None
             try:
                 siril.run_script(again, log)
@@ -284,14 +290,27 @@ def bge(work: Path, smoothing: float = 0.1) -> None:
     tools.check_outputs([work / BGE, work / BGE_BACKGROUND], log)
 
 
+def narrowband_args(spec) -> str:
+    """SPCC's narrowband arguments for a [color] narrowband value ("" for "none")."""
+    from .config import parse_narrowband
+    bands = parse_narrowband(spec)
+    if bands is None:
+        return ""
+    return " ".join(f"-{c}wl={siril.fmt_num(wl)} -{c}bw={siril.fmt_num(bw)}" for c, (wl, bw) in zip("rgb", bands))
+
+
 def color(work: Path, sensor="Sony IMX585", filt="UV/IR Block", focal=160.0, pixel=2.9,
-          catalog="gaia", whiteref="Average Spiral Galaxy", catalog_fallback=True) -> None:
+          catalog="gaia", whiteref="Average Spiral Galaxy", catalog_fallback=True,
+          narrowband: str = "none") -> None:
+    """``narrowband`` ("R/bw,G/bw,B/bw" in nm, or "none") uses SPCC's narrowband mode instead of
+    the ``filt`` filter curve, for a dual- or tri-band filter that Siril's database does not list."""
     from . import catalog as cat
     work = _abs(work)
     tools.require_file(work / BGE, "background-extracted image (run `darkroom bge` first)")
     script = siril.render_file("color.ssf", work, {
         "WORK": str(work), "FOCAL": siril.fmt_num(focal), "PIXEL": siril.fmt_num(pixel),
         "CATALOG": catalog, "SENSOR": sensor, "FILTER": filt, "WHITEREF": whiteref,
+        "NARROWBAND": narrowband_args(narrowband),
     })
     log = tools.logs_dir(work) / "color.log"
     spcc = work / SPCC
@@ -478,7 +497,7 @@ def starnet_needed(finish_table: dict) -> bool:
 
 _RESULT_KEYS = {
     "bge": ("smoothing",),
-    "color": ("sensor", "filter", "focal", "pixel", "catalog", "whiteref"),
+    "color": ("sensor", "filter", "focal", "pixel", "catalog", "whiteref"),   # + narrowband when on
     "denoise": ("strength", "cpu"),
     "deconv": ("strength", "psf", "cpu"),
     "stretch": ("asinh", "shadows", "target_bg", "sat"),
@@ -490,9 +509,12 @@ _RESULT_KEYS = {
 
 def result_params(stage: str, table: dict) -> dict:
     """The settings of a stage that change its output (what the skip logic compares).
-    For ``stack`` pass a table that already has ``subs`` and the resolved ``dark``."""
+    For ``stack`` pass a table that already has ``subs`` and the resolved ``dark`` (and ``bias``
+    and ``flats``: the master files the lights are calibrated with, or None)."""
     if stage == "stack":
         return {"subs": str(table["subs"]), "dark": str(table["dark"]) if table["dark"] else "none",
+                # recorded only when used, so work dirs made before these keys existed stay up to date
+                **{k: str(table[k]) for k in ("bias", "flats") if table.get(k)},
                 "framing": table["framing"], "keep_fwhm": float(table["keep_fwhm"]),
                 "keep_round": float(table["keep_round"]),
                 # only recorded when in use, so work dirs made before these keys existed stay up to date
@@ -504,6 +526,8 @@ def result_params(stage: str, table: dict) -> dict:
     for k in _RESULT_KEYS[stage]:
         v = table[k]
         out[k] = float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and k != "erode" else v
+    if stage == "color" and str(table.get("narrowband", "none")) != "none":
+        out["narrowband"] = table["narrowband"]
     if stage == "finish":
         aspect = parse_crop_spec(out["crop"])[0] == "aspect"
         if not aspect:
@@ -543,6 +567,7 @@ def inputs(work: Path, stage: str, params: dict) -> list[Path]:
         files = sorted(subs.glob("*.fit")) if subs.is_dir() else []
         if params["dark"] != "none":
             files.append(Path(params["dark"]))
+        files += [Path(params[k]) for k in ("bias", "flats") if params.get(k)]
         return files
     names = {"bge": [STACK], "color": [BGE], "denoise": [SPCC], "deconv": [DENOISED],
              "stretch": [params.get("input", DENOISED)],

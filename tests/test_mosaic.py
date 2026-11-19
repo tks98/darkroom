@@ -502,7 +502,7 @@ def test_init_detects_a_mosaic_and_the_s30(tmp_path, capsys):
 def test_mosaic_scripts_render():
     t = siril.template_dir()
     first = siril.render((t / "mosaic_solve.ssf").read_text(), {
-        "PROCESS": "/w/process", "SUBS": "/s/rosette subs", "DARK": "", "NODARK": "1", "FORCE": "-force ", "FRAMES": "",
+        "PROCESS": "/w/process", "SUBS": "/s/rosette subs", "DARK": "", "FORCE": "-force ", "FRAMES": "",
         "MAG": "13", "FOCAL": "150", "PIXEL": "2.9"})
     lines = [l for l in first.splitlines() if l and not l.startswith("#")]
     assert 'cd "/s/rosette subs"' in lines and 'link light "-out=/w/process"' in lines
@@ -510,7 +510,7 @@ def test_mosaic_scripts_render():
     assert ("seqplatesolve pp_light -catalog=gaia -nocache -force -limitmag=13 -focal=150 -pixelsize=2.9 "
             "-order=2") in lines
     again = siril.render((t / "mosaic_solve.ssf").read_text(), {
-        "PROCESS": "/w/process", "SUBS": "", "DARK": "", "NODARK": "", "FRAMES": "151", "MAG": "13", "FOCAL": "150",
+        "PROCESS": "/w/process", "SUBS": "", "DARK": "", "FRAMES": "151", "MAG": "13", "FOCAL": "150",
         "PIXEL": "2.9"})
     again = code(again)
     assert "link" not in again and "calibrate" not in again and "-force" not in again
@@ -518,7 +518,7 @@ def test_mosaic_scripts_render():
     assert again.index("select pp_light") < again.index("seqplatesolve pp_light")
     assert "select" not in code(first)
     dark = siril.render((t / "mosaic_solve.ssf").read_text(), {
-        "PROCESS": "/w/process", "SUBS": "/s", "DARK": "/d/dark.fit", "NODARK": "", "FORCE": "-force ", "FRAMES": "",
+        "PROCESS": "/w/process", "SUBS": "/s", "DARK": "/d/dark.fit", "FORCE": "-force ", "FRAMES": "",
         "MAG": "13", "FOCAL": "150", "PIXEL": "2.9"})
     assert 'calibrate light "-dark=/d/dark.fit" -cc=dark 3 3 -cfa -equalize_cfa -debayer' in dark
     stack = siril.render((t / "mosaic_stack.ssf").read_text(), {

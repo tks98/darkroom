@@ -28,8 +28,10 @@ SCHEMA: dict[str, dict[str, tuple[str, object, str]]] = {
     "target": {
         "name": ("str", None, "object name (informational)"),
         "subs": ("path", None, "folder with the light subs"),
-        "dark": ("str", None, '"auto" (pick from dark_library), "none", or the path of a master dark'),
+        "dark": ("str", None, '"auto" (pick from dark_library), "none", a master dark, or a folder of raw darks'),
         "dark_library": ("path", None, 'master-dark library, used when dark = "auto"'),
+        "bias": ("str", "none", '"none", a master bias, or a folder of raw bias frames'),
+        "flats": ("str", "none", '"none", a master flat, or a folder of raw flats'),
         "camera": ("str", None, "camera preset name, or the path of a camera .toml"),
         "look": ("str", None, "look preset name, or the path of a look .toml"),
     },
@@ -53,6 +55,8 @@ SCHEMA: dict[str, dict[str, tuple[str, object, str]]] = {
         "pixel": ("float", 2.9, "pixel size in um (plate solve)"),
         "catalog": ("str", "gaia", "plate-solve catalogue"),
         "whiteref": ("str", "Average Spiral Galaxy", "SPCC white reference"),
+        "narrowband": ("str", "none", '"none", or SPCC narrowband mode for a dual-band filter: '
+                       '"R_nm/bw,G_nm/bw,B_nm/bw" (e.g. "656.28/12,500.7/12,500.7/12"); replaces filter'),
         "catalog_fallback": ("bool", True, "fetch Gaia DR3 from ESA if Siril's catalogue server is down"),
     },
     "denoise": {
@@ -105,6 +109,32 @@ DEFAULT_CAMERA_META = {
 }
 _CAMERA_META_SECTIONS = ("camera", "filters", "darks")
 _PRESET_SETTING_SECTIONS = tuple(s for s in SCHEMA if s != "target")
+
+
+# [target] keys that hold a calibration file or folder (or "none"; dark also "auto")
+CALIBRATION_KEYS = (("target", "dark"), ("target", "bias"), ("target", "flats"))
+
+
+def parse_narrowband(value) -> tuple[tuple[float, float], ...] | None:
+    """[color] narrowband: None for "none", else ((wavelength, bandwidth) in nm) for R, G, B."""
+    if value is None or str(value).strip().lower() == "none":
+        return None
+    bad = ValueError(f'narrowband should be "none" or three "wavelength/bandwidth" pairs in nm for R, G '
+                     f'and B, like "656.28/12,500.7/12,500.7/12"; got {value!r}')
+    parts = [p.strip() for p in str(value).split(",")]
+    if len(parts) != 3:
+        raise bad
+    out = []
+    for p in parts:
+        try:
+            wl, bw = (float(x) for x in p.split("/"))
+        except ValueError:
+            raise bad from None
+        if not (300 <= wl <= 1100 and 0 < bw <= 200):
+            raise ValueError(f"narrowband: {p!r} should be a wavelength of 300 to 1100 nm and a "
+                             "bandwidth of 0 to 200 nm") from None
+        out.append((wl, bw))
+    return tuple(out)
 
 
 class ConfigError(tools.StageError):
@@ -196,7 +226,7 @@ def _coerce(section: str, key: str, value, where: str, base: Path | None):
         value = str(value)
     if not isinstance(value, str):
         raise bad
-    if typ == "path" or (section, key) == ("target", "dark") and value.lower() not in ("auto", "none"):
+    if typ == "path" or (section, key) in CALIBRATION_KEYS and value.lower() not in ("auto", "none"):
         p = Path(value).expanduser()
         if not p.is_absolute() and base is not None:
             p = base / p
@@ -229,9 +259,20 @@ def _check(values: dict[str, dict[str, object]]) -> None:
         raise ConfigError(f"[deconv] strength is 0 (off) to 1, got {dc['strength']!r}")
     if dc["psf"] != "auto" and not 0 < dc["psf"] <= 50:
         raise ConfigError(f'[deconv] psf is the star FWHM in pixels (0 < value <= 50) or "auto", got {dc["psf"]!r}')
-    d = values["target"]["dark"]
-    if d is not None and d.lower() in ("auto", "none"):
-        values["target"]["dark"] = d.lower()
+    t = values["target"]
+    for _section, key in CALIBRATION_KEYS:
+        if t[key] is not None and t[key].lower() in ("auto", "none"):
+            t[key] = t[key].lower()
+    for key in ("bias", "flats"):
+        if t[key] == "auto":
+            raise ConfigError(f'[target] {key} should be "none", a master file or a folder of raw frames; '
+                              '"auto" is only for dark')
+    try:
+        parse_narrowband(values["color"]["narrowband"])
+    except ValueError as e:
+        raise ConfigError(f"[color] {e}") from None
+    if values["color"]["narrowband"].strip().lower() == "none":
+        values["color"]["narrowband"] = "none"
 
 
 def _layer(values, sources, data: dict, label: str, where: str, base: Path | None, sections) -> None:

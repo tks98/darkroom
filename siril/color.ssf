@@ -8,5 +8,8 @@ setext fit
 cd "{{WORK}}"
 load bge.fits
 platesolve -focal={{FOCAL}} -pixelsize={{PIXEL}} -catalog={{CATALOG}}
-spcc "-oscsensor={{SENSOR}}" "-oscfilter={{FILTER}}" "-whiteref={{WHITEREF=Average Spiral Galaxy}}"
+# [color] narrowband: SPCC's narrowband mode (filter wavelengths and bandwidths)
+# instead of a filter curve from Siril's database
+{{ifnot NARROWBAND}}spcc "-oscsensor={{SENSOR}}" "-oscfilter={{FILTER}}" "-whiteref={{WHITEREF=Average Spiral Galaxy}}"
+{{if NARROWBAND}}spcc "-oscsensor={{SENSOR}}" -narrowband {{NARROWBAND=}} "-whiteref={{WHITEREF=Average Spiral Galaxy}}"
 save spcc

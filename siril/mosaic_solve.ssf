@@ -15,8 +15,12 @@ set16bits
 {{if SUBS}}cd "{{SUBS}}"
 {{if SUBS}}link light "-out={{PROCESS}}"
 cd "{{PROCESS}}"
-{{if DARK}}calibrate light "-dark={{DARK}}" -cc=dark 3 3 -cfa -equalize_cfa -debayer
-{{if NODARK}}calibrate light -cfa -equalize_cfa -debayer
+{{if SUBS}}{{if DARK}}{{if FLAT}}calibrate light "-dark={{DARK}}" "-flat={{FLAT=}}" -cc=dark 3 3 -cfa -equalize_cfa -debayer
+{{if SUBS}}{{if DARK}}{{ifnot FLAT}}calibrate light "-dark={{DARK}}" -cc=dark 3 3 -cfa -equalize_cfa -debayer
+{{if SUBS}}{{ifnot DARK}}{{if BIAS}}{{if FLAT}}calibrate light "-bias={{BIAS=}}" "-flat={{FLAT=}}" -cfa -equalize_cfa -debayer
+{{if SUBS}}{{ifnot DARK}}{{if BIAS}}{{ifnot FLAT}}calibrate light "-bias={{BIAS=}}" -cfa -equalize_cfa -debayer
+{{if SUBS}}{{ifnot DARK}}{{ifnot BIAS}}{{if FLAT}}calibrate light "-flat={{FLAT=}}" -cfa -equalize_cfa -debayer
+{{if SUBS}}{{ifnot DARK}}{{ifnot BIAS}}{{ifnot FLAT}}calibrate light -cfa -equalize_cfa -debayer
 
 # On the rerun: seqplatesolve deselects the frames it could not solve; select them all
 # again so the frames whose catalogue was missing get another try
