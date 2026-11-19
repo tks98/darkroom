@@ -54,6 +54,8 @@ Three things had to be found out by hand first. Registered frames must be 32-bit
 
 On the Rosette, 139 of 151 frames were solved and 127 stacked, with no visible seams. A 215-frame Alnilam mosaic gave 185 solved and 173 stacked. Colour calibration on the Rosette mosaic used 1615 stars but called its fit imprecise. Ordinary stacks are unchanged.
 
+On Linux, darkroom first wrote the star lists to `~/.cache/siril/download_cache`, a guess. Siril 1.4.5 keeps its download cache in its config folder instead, `~/.config/siril/download_cache` (`$XDG_CONFIG_HOME` when set), as a plate solve in the Docker image showed in its "Cannot create catalogue file" line; the fallback would still have worked, one query and one timeout per pointing. With the path fixed, the Rosette stack in the Docker image (emulated on Apple Silicon) read all 151 catalogues from the cache with no download, solved 139 of 151 frames in 17 seconds (3 seconds natively), stacked 127, and cropped to 2415×3904, one pixel smaller each way than natively.
+
 The same work added a camera preset for the original S30 (`seestar-s30`: 150 mm, its own SPCC sensor entry). Camera detection now prefers an exact match of the header value and otherwise the longest matching text, so the S30 preset does not claim S30 Pro subs.
 
 ## Core compression
