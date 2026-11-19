@@ -653,6 +653,37 @@ def check_catalogue(get: Callable = http_get) -> Result:
                   "check the internet connection (VPN, proxy, firewall); the color stage needs a catalogue")
 
 
+def check_spcc_catalogue(work: Path | None, store=None) -> Result | None:
+    """Whether darkroom's local copy of SPCC's star spectra covers the field of --work.
+    Only reads files; None without --work, without an image with a sky position, or when
+    [color] spcc_local is off."""
+    from . import gaia_xp
+    if work is None:
+        return None
+    name = "spcc catalogue"
+    try:
+        from . import config
+        c = config.resolve(work.expanduser())["color"]
+        if not c["spcc_local"]:
+            return None
+        found = gaia_xp.work_field(work.expanduser(), float(c["focal"]), float(c["pixel"]))
+    except Exception:
+        return None
+    if found is None:
+        return None
+    image, f = found
+    store = store or gaia_xp.Store()
+    pixels = gaia_xp.disc_pixels(f.ra, f.dec, gaia_xp.search_radius(f))
+    miss = store.missing(pixels)
+    if not miss:
+        return Result(name, OK, f"the local copy in {store.root} covers the field of {image.name} "
+                      f"({len(pixels)} sky pixels); SPCC runs offline")
+    return Result(name, WARN, f"the local copy in {store.root} lacks {len(miss)} of the {len(pixels)} sky "
+                  f"pixels of {image.name}'s field",
+                  f"nothing to do while online: `darkroom color` fetches them itself; to work offline later, "
+                  f"run `darkroom catalog fetch --work {work}` now")
+
+
 # ---------------------------------------------------------------- 8. disk
 
 def count_subs(subs: Path) -> int:
@@ -715,6 +746,7 @@ def run_checks(args) -> list[Result]:
     ]
     if not args.offline:
         jobs.append(("catalogue", check_catalogue))
+    jobs.append(("spcc catalogue", lambda: check_spcc_catalogue(args.work)))
     jobs.append(("disk", lambda: check_disk(args.work, args.subs)))
 
     def safe(name, fn):
@@ -776,7 +808,8 @@ HELP = "check Siril, GraXpert, the denoise model and GPU, StarNet, catalogue ser
 
 def _add_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--work", type=Path, metavar="DIR", default=None,
-                   help="work directory: check free disk space on its volume")
+                   help="work directory: check free disk space on its volume, and whether the local "
+                        "SPCC catalogue covers its field")
     p.add_argument("--subs", type=Path, metavar="DIR", default=None,
                    help="directory with the light subs: estimate the space a run needs")
     p.add_argument("--starnet-dir", metavar="DIR", default=None,

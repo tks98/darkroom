@@ -7,7 +7,7 @@ import time
 from collections import namedtuple
 from pathlib import Path
 
-from . import __version__, config, doctor, get_starnet, installer, stages, tools, toolset
+from . import __version__, config, doctor, gaia_xp, get_starnet, installer, stages, tools, toolset
 from .finish import FinishParams, parse_aspect, parse_center, parse_crop
 
 def env_help() -> str:
@@ -30,8 +30,9 @@ environment (defaults for this platform, {"macOS" if tools.is_macos() else "Linu
   DARKROOM_DECONV_MODEL     GraXpert 1.0.1 object deconvolution model, for the optional deconv
                             stage; `darkroom fetch-models --deconv` downloads it
                             (default {tools.default_deconv_model()})
-  DARKROOM_CACHE           cache for the fixed-batch denoise model and StarNet2 installed by
-                            `darkroom get-starnet` (default {tools.default_cache()})
+  DARKROOM_CACHE           cache for the fixed-batch denoise model, StarNet2 installed by
+                            `darkroom get-starnet` and the local copy of SPCC's star spectra
+                            (default {tools.default_cache()})
   DARKROOM_STARNET_DIR      folder containing starnet2 (StarNet2 2.6) or starnet++ (StarNet v2.0.2);
                             used when neither --starnet-dir nor [starnet] dir is set
                             (default: the newest StarNet2 installed by `darkroom get-starnet`)
@@ -216,6 +217,8 @@ def _color_args(o):
     o.add("--no-catalog-fallback", dest="catalog_fallback", action="store_false",
           key=("color", "catalog_fallback"),
           help="do not fetch Gaia DR3 from the ESA archive when Siril's catalogue server is unreachable")
+    o.add("--no-spcc-local", dest="spcc_local", action="store_false", key=("color", "spcc_local"),
+          help="let Siril download SPCC's star spectra itself instead of using darkroom's local copy")
 
 
 def _denoise_args(o):
@@ -397,6 +400,7 @@ def build_parser() -> argparse.ArgumentParser:
     doctor.add_parser(sp)
     get_starnet.add_parser(sp)
     installer.add_parser(sp)
+    gaia_xp.add_parser(sp)
     p = sp.add_parser("fetch-models", help="make GraXpert download its AI denoise model 3.0.2",
                       description="make GraXpert download its AI denoise model 3.0.2",
                       epilog=FETCH_MODELS_EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -520,7 +524,7 @@ def _call(stage: str, work: Path, s: config.Settings, table: dict | None = None,
     elif stage == "color":
         c = s["color"]
         stages.color(work, c["sensor"], c["filter"], c["focal"], c["pixel"], c["catalog"], c["whiteref"],
-                     c["catalog_fallback"], c["narrowband"])
+                     c["catalog_fallback"], c["narrowband"], c["spcc_local"])
     elif stage == "denoise":
         stages.denoise(work, s["denoise"]["strength"], s["denoise"]["cpu"])
     elif stage == "deconv":
@@ -841,7 +845,7 @@ def main(argv=None) -> int:
     if a.cmd == "doctor":  # reports only: no work dir is created, and its exit code is the result
         return a.func(a)
     try:
-        if a.cmd in ("get-starnet", "fetch-models", "setup"):
+        if a.cmd in ("get-starnet", "fetch-models", "setup", "catalog"):
             return a.func(a)
         _dispatch(a)
     except tools.StageError as e:

@@ -59,7 +59,7 @@ On a machine without internet access, download the Linux command-line zip from t
 
 ## The cache volume
 
-The image sets its home directory to `/cache`, which the wrapper mounts as the Docker volume `darkroom-cache`. It holds GraXpert's models (about 600 MB), StarNet (about 200 MB), the GPU copy of the denoise model, and Siril's downloaded star catalogues. Siril keeps those in its config folder, `/cache/.config/siril/download_cache`, and that is where a mosaic's `stack` writes the star lists it fetches for every pointing, so they stay in the volume: a second run of the same mosaic finds them all there and fetches nothing. To start over, remove the volume:
+The image sets its home directory to `/cache`, which the wrapper mounts as the Docker volume `darkroom-cache`. It holds GraXpert's models (about 600 MB), StarNet (about 200 MB), the GPU copy of the denoise model, and Siril's downloaded star catalogues. Siril keeps those in its config folder, `/cache/.config/siril/download_cache`, and that is where a mosaic's `stack` writes the star lists it fetches for every pointing, so they stay in the volume: a second run of the same mosaic finds them all there and fetches nothing. darkroom's copy of SPCC's star spectra is in the volume too, in `/cache/.cache/darkroom/gaia-xpsampled`, so colour calibration of a field fetched once needs no network. To start over, remove the volume:
 
 ```sh
 docker volume rm darkroom-cache

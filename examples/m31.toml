@@ -33,6 +33,7 @@ pixel = 2.9
 catalog = "gaia"
 whiteref = "Average Spiral Galaxy"
 catalog_fallback = true
+spcc_local = true
 
 [denoise]
 strength = 0.6

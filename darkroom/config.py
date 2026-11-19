@@ -58,6 +58,8 @@ SCHEMA: dict[str, dict[str, tuple[str, object, str]]] = {
         "narrowband": ("str", "none", '"none", or SPCC narrowband mode for a dual-band filter: '
                        '"R_nm/bw,G_nm/bw,B_nm/bw" (e.g. "656.28/12,500.7/12,500.7/12"); replaces filter'),
         "catalog_fallback": ("bool", True, "fetch Gaia DR3 from ESA if Siril's catalogue server is down"),
+        "spcc_local": ("bool", True, "keep a local copy of SPCC's Gaia star spectra for the field (fetched "
+                       "once) and run SPCC on it, so it does not depend on Siril's catalogue servers"),
     },
     "denoise": {
         "strength": ("float", 0.6, "denoise strength 0..1"),

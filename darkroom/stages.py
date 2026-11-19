@@ -299,55 +299,146 @@ def narrowband_args(spec) -> str:
     return " ".join(f"-{c}wl={siril.fmt_num(wl)} -{c}bw={siril.fmt_num(bw)}" for c, (wl, bw) in zip("rgb", bands))
 
 
+LOCAL_QUERY = "Getting stars from local catalogue"
+
+
+def _spcc_catalogue(image: Path, focal: float, pixel: float, say=print) -> Path | None:
+    """Make darkroom's local copy of SPCC's star spectra cover the field of ``image``
+    (fetched once per sky region); its folder, or None to let Siril download them itself."""
+    from . import gaia_xp
+    field = gaia_xp.field_of(image, focal, pixel)
+    if field is None:
+        say(f"color: {image.name} has no sky position in its header; Siril will download the SPCC star "
+            "spectra itself")
+        return None
+    try:
+        return gaia_xp.ensure(field.ra, field.dec, gaia_xp.search_radius(field), log=say)
+    except tools.StageError as e:
+        say(f"color: {e}. Siril will try to download them itself")
+        return None
+
+
+def _local_spcc_needs_more(text: str, say=print) -> bool:
+    """After a run on the local copy: when the plate-solved field reaches sky the local copy
+    does not hold, fetch it and return True (run again). Raises StageError if that fetch fails."""
+    from . import gaia_xp
+    f = gaia_xp.field_from_log(text)
+    if f is None or gaia_xp.Store().covers(*f):
+        return False
+    say("color: the plate-solved field reaches beyond the local SPCC catalogue; fetching the rest")
+    gaia_xp.ensure(*f, log=say)
+    return True
+
+
 def color(work: Path, sensor="Sony IMX585", filt="UV/IR Block", focal=160.0, pixel=2.9,
           catalog="gaia", whiteref="Average Spiral Galaxy", catalog_fallback=True,
-          narrowband: str = "none") -> None:
+          narrowband: str = "none", spcc_local: bool = True) -> None:
     """``narrowband`` ("R/bw,G/bw,B/bw" in nm, or "none") uses SPCC's narrowband mode instead of
-    the ``filt`` filter curve, for a dual- or tri-band filter that Siril's database does not list."""
+    the ``filt`` filter curve, for a dual- or tri-band filter that Siril's database does not list.
+
+    ``spcc_local``: SPCC reads its Gaia star spectra from darkroom's local copy (see gaia_xp),
+    which is fetched for the field first, instead of downloading them inside Siril. If that
+    fetch fails, Siril downloads them itself as before."""
     from . import catalog as cat
     work = _abs(work)
     tools.require_file(work / BGE, "background-extracted image (run `darkroom bge` first)")
-    script = siril.render_file("color.ssf", work, {
+    values = {
         "WORK": str(work), "FOCAL": siril.fmt_num(focal), "PIXEL": siril.fmt_num(pixel),
         "CATALOG": catalog, "SENSOR": sensor, "FILTER": filt, "WHITEREF": whiteref,
         "NARROWBAND": narrowband_args(narrowband),
-    })
+    }
     log = tools.logs_dir(work) / "color.log"
     spcc = work / SPCC
-    before = spcc.stat().st_mtime_ns if spcc.is_file() else None
-    try:
-        siril.run_script(script, log)
+    local = _spcc_catalogue(work / BGE, focal, pixel) if spcc_local else None
+
+    def attempt() -> None:
+        before = spcc.stat().st_mtime_ns if spcc.is_file() else None
+        script = siril.render_file("color.ssf", work, values | {
+            "SPCC_CATALOGUE": str(local) if local else "",
+            "SPCC_SOURCE": " -catalog=localgaia" if local else ""})
+        if local:
+            with siril.scratch_config() as cfg:
+                siril.run_script(script, log, initfile=cfg)
+        else:
+            siril.run_script(script, log)
         if spcc.is_file() and spcc.stat().st_mtime_ns == before:
             raise tools.StageError(f"Siril did not write {spcc}; last lines of {log}:\n" + tools.tail(log))
+
+    def log_text() -> str:
+        return log.read_text(errors="replace") if log.is_file() else ""
+
+    notes = []
+    try:
+        attempt()
     except tools.StageError as first:
-        text = log.read_text(errors="replace") if log.is_file() else ""
+        text = log_text()
         requests = cat.failed_requests(text)
-        if not requests:
+        if not requests and local and LOCAL_QUERY in text:
+            # SPCC could not use the local copy: cover the solved field, else go online
+            first_log = log.with_name("color.attempt1.log")
+            first_log.write_text(text)
+            try:
+                if not _local_spcc_needs_more(text):
+                    raise tools.StageError("the local copy already covers the solved field")
+            except tools.StageError as e:
+                print(f"color: SPCC failed on the local star spectra ({e}); running it again with "
+                      "Siril downloading them itself", flush=True)
+                local = None
+            try:
+                attempt()
+            except tools.StageError:
+                server = cat.spcc_server_failure(log_text())
+                if server:
+                    raise tools.StageError(f"color: {server}\n(log: {log})") from None
+                raise
+            notes.append(f"second attempt; first attempt's log is {first_log.name}")
+        elif not requests:
             server = cat.spcc_server_failure(text)
             if server:
                 raise tools.StageError(f"color: {server}\n(log: {log})") from None
             raise
-        if not catalog_fallback:
-            raise tools.StageError(f"{first}\n(Siril could not download its star catalogue; the fallback "
-                                   "that fetches it from the ESA Gaia archive is switched off)") from None
-        first_log = log.with_name("color.attempt1.log")
-        first_log.write_text(text)
-        try:
-            written = cat.recover(text)
-        except tools.StageError as e:
-            raise tools.StageError(f"{first}\ncatalogue fallback also failed: {e}") from None
-        if not written:
-            raise
-        try:
-            siril.run_script(script, log)
-        except tools.StageError as second:
-            raise tools.StageError(
-                f"plate solve failed twice.\nFirst attempt (log kept as {first_log}):\n{first}\n"
-                f"Second attempt, after fetching the catalogue from the ESA Gaia archive:\n{second}") from None
+        else:
+            if not catalog_fallback:
+                raise tools.StageError(f"{first}\n(Siril could not download its star catalogue; the fallback "
+                                       "that fetches it from the ESA Gaia archive is switched off)") from None
+            first_log = log.with_name("color.attempt1.log")
+            first_log.write_text(text)
+            try:
+                written = cat.recover(text)
+            except tools.StageError as e:
+                raise tools.StageError(f"{first}\ncatalogue fallback also failed: {e}") from None
+            if not written:
+                raise
+            try:
+                attempt()
+            except tools.StageError as second:
+                raise tools.StageError(
+                    f"plate solve failed twice.\nFirst attempt (log kept as {first_log}):\n{first}\n"
+                    f"Second attempt, after fetching the catalogue from the ESA Gaia archive:\n{second}") from None
+            notes.append("catalogue fallback used: " + ", ".join(str(p) for p in written)
+                         + f"; first attempt's log is {first_log.name}")
+            print("color: catalogue fallback was used (Siril's catalogue server could not be reached)", flush=True)
+    if local:
+        text = log_text()
+        if LOCAL_QUERY not in text:
+            notes.append("Siril did not read the local SPCC catalogue")
+        else:
+            try:
+                again = _local_spcc_needs_more(text)
+            except tools.StageError as e:
+                again = False
+                print(f"color: WARNING: the solved field reaches beyond the local SPCC catalogue and "
+                      f"fetching the rest failed ({e}); SPCC used the stars it had", flush=True)
+            if again:
+                log.with_name("color.attempt1.log").write_text(text)
+                attempt()
+                notes.append("SPCC ran again after the local catalogue was extended to the solved "
+                             "field; first attempt's log is color.attempt1.log")
+            notes.append(f"SPCC read its star spectra from the local catalogue in {local}")
+    if notes:
         with open(log, "a") as f:
-            f.write("[darkroom] catalogue fallback used: " + ", ".join(str(p) for p in written)
-                    + f"; first attempt's log is {first_log.name}\n")
-        print("color: catalogue fallback was used (Siril's catalogue server could not be reached)", flush=True)
+            for n in notes:
+                f.write(f"[darkroom] {n}\n")
     tools.check_outputs([spcc], log)
 
 
