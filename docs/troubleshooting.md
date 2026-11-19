@@ -16,6 +16,15 @@ The `color` stage notices that failure in Siril's log, fetches the Gaia DR3 star
 
 If both servers are down, wait. Colour calibration is worth more than the time it saves to skip it.
 
+## Colour calibration stops with "Siril could not download the star spectra"
+
+SPCC compares the stars in the image with Gaia DR3 spectra, which Siril downloads from its own servers, Zenodo first. When Zenodo answers with an error, Siril 1.4.5 logs "Query failed on mirror ..., trying alternatives..." and then crashes instead of trying the next server, so macOS may also show a crash report for `siril-cli`. The `color` stage recognises this and says which error the server gave:
+
+- HTTP 500, 502 or 504: Zenodo is having problems. On 2026-11-18 it returned these for several hours.
+- HTTP 429: Zenodo is rate-limiting your machine, usually after several colour calibrations in a row. Wait a few minutes.
+
+Nothing is wrong with the image. Run the stage again later. darkroom does not skip colour calibration, and the catalogue fallback for plate solving does not cover this, because the spectra are not available from the ESA archive in the form Siril reads. Siril's local Gaia catalogue for SPCC avoids the download entirely, at the cost of a large one-off install; see Siril's documentation.
+
 ## The master dark does not match the subs
 
 The Seestar's sensor is not cooled, so its temperature follows the night. During the M31 session it fell from 21.4 °C to 8.6 °C (median 10.9 °C), while the only master dark had been taken at 21.5 °C, before the session started. darkroom warns when the dark is more than 5 °C from the subs.
