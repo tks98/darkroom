@@ -211,7 +211,7 @@ colour. Say so when you describe the result.
 
 ## Choosing a look
 
-Two looks are shipped. Pass `--look` to `init`, or set `[target] look`.
+Three looks are shipped. Pass `--look` to `init`, or set `[target] look`.
 
 - `galaxy` (the default): StarNet removes the stars, the galaxy is
   enhanced, the stars go back smaller. Made on M31.
@@ -221,6 +221,10 @@ Two looks are shipped. Pass `--look` to `init`, or set `[target] look`.
   `star_strength`, `yb`, `core`, `sharpen` and `erode` do nothing. It uses a stronger
   arcsinh stretch (100) so the core stays resolved. Made on M13 from 7.5
   minutes of data.
+- `nebula`: for emission nebulae. No yellow/blue push (`yb = 1`; it turns
+  hydrogen-alpha orange), a brighter stretch background (0.15) for the faint
+  gas, `sat = 1.5`, `gamma = 1.8`, `black = 0.04`. Made on two Seestar S30
+  mosaics (the Rosette and the Horsehead area) through the dual-band LP filter.
 
 If you are unsure which applies, run the galaxy look once and view
 `starless.tif`: if the target is gone from it, use `stars = "keep"`.
@@ -230,8 +234,10 @@ white, too high mottles the sky with colour noise), then `[finish] sat` and
 `black`. A small target needs `crop = "1:1"` (or another shape) with
 `crop_scale` below 1.
 
-A nebula has no look yet. Expect to tune `stretch` and `finish` from scratch,
-and tell the user that each look was made from a single image.
+For a nebula, check at 1:1 that the sky has not turned into coloured
+speckles (lower `[finish] sat`) and that the faint outer gas is visible
+(raise `[stretch] target_bg` a little). Tell the user that each look was made
+from one or two images.
 
 ## Known failures
 

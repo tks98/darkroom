@@ -1,0 +1,29 @@
+# Look preset: nebula. Settings found on two Seestar S30 mosaics of emission
+# nebulae (the Rosette, 127 x 60 s, and the Flame and Horsehead area in Orion,
+# 173 x 60 s), both through the Seestar's dual-band LP filter. Compared with
+# the galaxy look: no yellow/blue push (it turns hydrogen-alpha red to orange),
+# a brighter background target so the faint outer gas shows, more saturation
+# and stronger star shrinking for star-rich Milky Way fields. Same keys as
+# darkroom.toml; sits above the camera preset and below darkroom.toml.
+
+[color]
+whiteref = "Average Spiral Galaxy"   # SPCC white reference (not yet tuned for nebulae)
+
+[stretch]
+asinh = 25                           # asinh -human stretch factor
+shadows = -2.8                       # autostretch shadows clipping (sigma)
+target_bg = 0.15                     # brighter than the galaxy look's 0.10: shows the faint outer gas
+sat = 0.35                           # Siril satu amount
+
+[finish]
+gamma = 1.8                          # smaller stars than the galaxy look (dense Milky Way fields)
+star_strength = 0.95                 # star layer multiplier
+mid = 0.42                           # midtone lift on the starless layer
+sat = 1.5                            # saturation on the starless layer (1.6 adds colour noise)
+yb = 1.0                             # off: a yellow/blue push turns hydrogen-alpha orange
+core = 0.2                           # gentle: tames bright knots without flattening them
+sharpen = 0.5                        # unsharp-mask amount on the nebula luminance
+sharpen_radius = 2.0                 # unsharp-mask Gaussian sigma (px)
+black = 0.04                         # darker sky than the galaxy look
+erode = 0                            # 3x3 erosion passes on the star layer
+neutral = true                       # neutralise the sky colour

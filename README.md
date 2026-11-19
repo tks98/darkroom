@@ -55,7 +55,7 @@ Setup ends with `darkroom doctor`, which checks every tool and prints a fix for 
 - [Installing](docs/install.md): requirements, `setup.sh`, `darkroom doctor`, environment variables, tests.
 - [Running darkroom in Docker](docs/docker.md): the Linux image, for Linux, Windows or anywhere you would rather not install Siril and GraXpert.
 - [Using darkroom](docs/usage.md): `init` and `run`, single stages, what to check after each stage, comparing variants, disk space.
-- [Configuration](docs/configuration.md): every setting with its default, dark selection, framing, star reduction, cropping, and the galaxy and cluster looks.
+- [Configuration](docs/configuration.md): every setting with its default, dark selection, framing, star reduction, cropping, and the galaxy, cluster and nebula looks.
 - [How it works](docs/pipeline.md): what each stage does, with numbers from M31.
 - [Troubleshooting](docs/troubleshooting.md): GraXpert on the GPU, the catalogue server, mismatched darks, StarNet and Gatekeeper, Siril's Python crashing on macOS.
 - [Using darkroom with an AI agent](docs/agents.md): the agent skill, for Claude Code or any agent that loads skills, and `AGENTS.md`.
@@ -64,7 +64,7 @@ Setup ends with `darkroom doctor`, which checks every tool and prints a fix for 
 
 ## Limitations
 
-darkroom has been tested end to end on two targets (M31 and M13) from one camera (the Seestar S30 Pro), its mosaic stacking on two mosaics from the original S30, and on one platform (macOS on Apple Silicon). Each look was made from a single image, and the cluster look from only 7.5 minutes of data. A nebula has no look yet.
+darkroom has been tested end to end on two targets (M31 and M13) from one camera (the Seestar S30 Pro), its mosaic stacking on two mosaics from the original S30, and on one platform (macOS on Apple Silicon). Each look was made from a single image, and the cluster look from only 7.5 minutes of data.
 
 It handles one-shot-colour data with a master dark. Flats, bias frames and mono or LRGB data are not supported. Automatic dark selection has only been tested against a library built from copies of one real master dark. Not yet tested: the CPU denoise path, installing from a wheel, `setup.sh` on a fresh machine, the LP filter mapping, and frame-selection percentages other than 90.
 

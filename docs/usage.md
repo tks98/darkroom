@@ -23,7 +23,7 @@ darkroom run  --work m31
   look          galaxy
 ```
 
-Use `--dark FILE` for one particular master dark, or `--no-dark` to stack without one. Use `--look cluster` for a target made of stars (see [Looks](configuration.md#looks)).
+Use `--dark FILE` for one particular master dark, or `--no-dark` to stack without one. Use `--look cluster` for a target made of stars and `--look nebula` for an emission nebula (see [Looks](configuration.md#looks)).
 
 The config file lists every setting. The ones `init` did not set are commented out and show the value in effect and where it comes from, so it doubles as a record of how the image was made. Before the first run, set `[starnet] dir` (or `DARKROOM_STARNET_DIR`) and, if you want one, `[finish] crop`.
 
