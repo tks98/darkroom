@@ -55,12 +55,13 @@ def remove_process(work: Path, log=print) -> None:
 def stack(work: Path, subs: Path, dark: Path | None, framing: str = "min", keep_fwhm: float = 90,
           keep_round: float = 90, clean: bool = False, force: bool = False, reuse: bool = False,
           out: str = "stack", sub_glob: str = "*.fit", keep_bkg: float = 100,
-          keep_stars: float = 100, mosaic: bool = False, focal: float = 160.0, pixel: float = 2.9) -> None:
+          keep_stars: float = 100, mosaic: bool = False, focal: float = 160.0, pixel: float = 2.9,
+          mosaic_crop: str = "rotate") -> None:
     """dark=None stacks without dark subtraction. ``reuse`` re-frames and re-stacks the
     registered sequence already in <work>/process instead of starting from the subs.
     ``mosaic`` plate-solves every frame (with ``focal`` and ``pixel``) instead of registering
     them against one reference, stacks them onto one canvas (framing is always max) and crops
-    it to the area with data everywhere."""
+    it to the area with data everywhere (``mosaic_crop``: "rotate", "rect" or "none", see mosaic.py)."""
     work = _abs(work)
     if Path(out).name != out:
         raise tools.StageError("--out is a basename inside the work directory, not a path")
@@ -123,6 +124,7 @@ def stack(work: Path, subs: Path, dark: Path | None, framing: str = "min", keep_
     stacked = work / f"{out}.fit"
     if mosaic:
         stacked.unlink(missing_ok=True)       # so a failed run cannot leave the old crop looking current
+        (work / f"{out}_full.fit").unlink(missing_ok=True)
     siril.run_script(script, log)
     tools.check_outputs([stacked], log)
     kept = frames_kept(log)
@@ -134,7 +136,11 @@ def stack(work: Path, subs: Path, dark: Path | None, framing: str = "min", keep_
             def say(m):
                 print(m, flush=True)
                 f.write(f"[darkroom] {m}\n")
-            mo.crop_to_data(stacked, work / f"{out}_full.fit", log=say)
+            if mosaic_crop == "none":
+                say(f"mosaic: not cropped ([stack] mosaic_crop = \"none\"); the parts of {stacked.name} "
+                    "without data are 0, which the later stages do not expect")
+            else:
+                mo.crop_to_data(stacked, work / f"{out}_full.fit", mode=mosaic_crop, log=say)
     if clean:
         remove_process(work)
 
@@ -488,7 +494,9 @@ def result_params(stage: str, table: dict) -> dict:
                 "keep_round": float(table["keep_round"]),
                 # only recorded when in use, so work dirs made before these keys existed stay up to date
                 **{k: float(table[k]) for k in ("keep_bkg", "keep_stars") if float(table.get(k, 100)) < 100},
-                **({"mosaic": True} if table.get("mosaic") else {})}
+                **({"mosaic": True} if table.get("mosaic") else {}),
+                **({"mosaic_crop": table["mosaic_crop"]}
+                   if table.get("mosaic") and table.get("mosaic_crop", "rotate") != "rotate" else {})}
     out = {}
     for k in _RESULT_KEYS[stage]:
         v = table[k]

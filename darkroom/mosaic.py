@@ -10,8 +10,8 @@ it, so a mosaic is plate-solved frame by frame instead. This module
 * prefills Siril's catalogue cache with one Gaia query for the whole field, split
   locally into the per-pointing files Siril reads (``cat_02_RA_DEC_RADIUS_MAG.csv``),
   so solving a hundred frames needs one network request, not a hundred;
-* crops the stacked canvas to the largest rectangle that has data everywhere and
-  keeps its WCS right.
+* crops the stacked canvas to the largest rectangle that has data everywhere (turning
+  the image when that keeps clearly more) and keeps its WCS right.
 
 Only RA, DEC and the image size are read from the headers. Site coordinates are not.
 """
@@ -21,6 +21,7 @@ import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import NamedTuple
 
 import numpy as np
 
@@ -270,31 +271,213 @@ def shift_wcs(header, x0: int, y0: int) -> None:
         header["CRPIX2"] = float(header["CRPIX2"]) - y0
 
 
-def crop_to_data(path: Path, full: Path, log=print) -> tuple[int, int, int, int] | None:
-    """Crop the stacked mosaic at ``path`` to the largest rectangle with data everywhere,
-    after moving the uncropped file to ``full``. Returns the box (x, y, w, h)."""
+# ---------------------------------------------------------- turned crop
+
+MIN_ROTATE_GAIN = 1.10      # turn the image only when that keeps at least 10% more pixels than an upright crop
+EDGE_TRIM = 3               # pixels trimmed off the data's edge before turning: the interpolation reaches past it
+SEARCH_BLOCKS = 150         # blocks on the long side for the 1-degree angle search
+REFINE_BLOCKS = 400         # and for the 0.25-degree refinement
+SPLINE_ORDER = 3            # cubic spline resampling when the image is turned
+
+
+def _run_lengths(mask: np.ndarray, axis: int) -> np.ndarray:
+    """Length of the run of True that ends at each element, along ``axis``."""
+    c = np.cumsum(mask, axis=axis, dtype=np.int32)
+    return c - np.maximum.accumulate(np.where(mask, 0, c), axis=axis)
+
+
+def largest_rect(mask: np.ndarray) -> tuple[int, int, int, int]:
+    """(y, x, h, w) of the largest all-True axis-aligned rectangle, exactly and without a Python loop
+    over pixels: for each height k, the widest run of columns whose valid run up to one row is >= k."""
+    heights = _run_lengths(mask, 0)
+    cols = mask.shape[1]
+    best = (0, 0, 0, 0, 0)
+    for k in np.unique(heights)[::-1]:              # tallest first; stop when no width can beat the best
+        k = int(k)
+        if k == 0 or k * cols <= best[0]:
+            break
+        runs = _run_lengths(heights >= k, 1)
+        r, c = divmod(int(runs.argmax()), cols)
+        w = int(runs[r, c])
+        if k * w > best[0]:
+            best = (k * w, r - k + 1, c - w + 1, k, w)
+    return best[1:]
+
+
+def _blocks(mask: np.ndarray, n: int) -> np.ndarray:
+    """``mask`` shrunk to at most ``n`` blocks on its long side (a block is True if all its pixels are)."""
+    H, W = mask.shape
+    f = max(1, math.ceil(max(H, W) / n))
+    return mask[:H // f * f, :W // f * f].reshape(H // f, f, W // f, f).all(axis=(1, 3))
+
+
+def rotation(shape: tuple[int, int], angle: float) -> tuple[np.ndarray, np.ndarray, tuple[int, int]]:
+    """(M, offset, out_shape) for turning an image of ``shape`` (rows, cols) by ``angle`` degrees onto
+    a canvas just big enough to hold it: output pixel (row, col) comes from input M @ (row, col) + offset.
+    A positive angle turns the picture clockwise as Siril shows it (FITS row 1 at the bottom)."""
+    H, W = shape
+    t = math.radians(angle)
+    c, s = math.cos(t), math.sin(t)
+    out = (math.ceil(abs(W * s) + abs(H * c) - 1e-6), math.ceil(abs(W * c) + abs(H * s) - 1e-6))
+    M = np.array([[c, s], [-s, c]])
+    off = np.array([(H - 1) / 2, (W - 1) / 2]) - M @ np.array([(out[0] - 1) / 2, (out[1] - 1) / 2])
+    return M, off, out
+
+
+def rotate_mask(mask: np.ndarray, angle: float) -> np.ndarray:
+    """``mask`` turned by ``angle`` degrees (nearest neighbour; outside the input is False)."""
+    if angle == 0:
+        return mask
+    from scipy import ndimage
+    M, off, out = rotation(mask.shape, angle)
+    return ndimage.affine_transform(mask.astype(np.uint8), M, off, out, order=0, cval=0) > 0
+
+
+def best_angle(valid: np.ndarray, step: float = 1.0, fine: float = 0.25) -> float:
+    """The angle in degrees (about -45..45) that gives the largest rectangle with ``valid`` True
+    everywhere: every ``step`` degrees on a coarse grid, then every ``fine`` degrees around the two
+    best on a finer one. Upright (0) wins ties."""
+    def area(mask, a):
+        _, _, h, w = largest_rect(rotate_mask(mask, a))
+        return h * w
+
+    small = _blocks(valid, SEARCH_BLOCKS)
+    coarse = {float(a): area(small, a) for a in np.arange(-45, 45, step)}
+    top = sorted(coarse, key=lambda a: (-coarse[a], abs(a)))[:2]
+    big = _blocks(valid, REFINE_BLOCKS)
+    n = round(step / fine)
+    cands = {0.0} | {round(a + d * fine, 3) for a in top for d in range(-n, n + 1)}
+    score = {a: area(big, a) for a in cands}
+    return max(score, key=lambda a: (score[a], -abs(a)))
+
+
+def _has_sip(header) -> bool:
+    return "A_ORDER" in header or str(header.get("CTYPE1", "")).endswith("-SIP")
+
+
+def _pc(header) -> np.ndarray:
+    """The PC matrix of a header, from PCi_j or CROTA2 (identity when neither is there)."""
+    if any(f"PC{i}_{j}" in header for i in (1, 2) for j in (1, 2)) or "CROTA2" not in header:
+        return np.array([[float(header.get(f"PC{i}_{j}", 1.0 if i == j else 0.0)) for j in (1, 2)]
+                         for i in (1, 2)])
+    t = math.radians(float(header["CROTA2"]))
+    r = float(header.get("CDELT2", 1.0)) / float(header.get("CDELT1", 1.0))
+    return np.array([[math.cos(t), -math.sin(t) * r], [math.sin(t) / r, math.cos(t)]])
+
+
+def rotate_wcs(header, M: np.ndarray, offset: np.ndarray) -> None:
+    """Update the WCS for an image resampled so that output pixel (row, col) comes from input pixel
+    M @ (row, col) + offset (numpy indices, 0-based). Linear WCS only (no SIP)."""
+    if "CRPIX1" not in header or "CRPIX2" not in header:
+        return
+    A = np.array([[M[1, 1], M[1, 0]], [M[0, 1], M[0, 0]]])        # the same map in (x, y) = (col, row)
+    b = np.array([offset[1], offset[0]])
+    # FITS pixel p = q + 1, so p_in = A p_out + (b + 1 - A 1): CRPIX_out = A^-1 (CRPIX_in - 1 - b) + 1
+    crpix = np.linalg.solve(A, np.array([float(header["CRPIX1"]), float(header["CRPIX2"])]) - 1 - b) + 1
+    header["CRPIX1"], header["CRPIX2"] = float(crpix[0]), float(crpix[1])
+    if any(k in header for k in ("CD1_1", "CD1_2", "CD2_1", "CD2_2")):
+        cd = np.array([[float(header.get(f"CD{i}_{j}", 0.0)) for j in (1, 2)] for i in (1, 2)]) @ A
+        for i in (1, 2):
+            for j in (1, 2):
+                header[f"CD{i}_{j}"] = float(cd[i - 1, j - 1])
+    else:
+        pc = _pc(header) @ A
+        for k in ("CROTA1", "CROTA2"):
+            header.remove(k, ignore_missing=True)
+        for i in (1, 2):
+            for j in (1, 2):
+                header[f"PC{i}_{j}"] = float(pc[i - 1, j - 1])
+
+
+def resample(data: np.ndarray, valid: np.ndarray, M: np.ndarray, offset: np.ndarray,
+             shape: tuple[int, int], order: int = SPLINE_ORDER) -> np.ndarray:
+    """``data`` ((H, W) or (C, H, W)) resampled onto ``shape`` through M and offset (see rotation),
+    as float32. Pixels without data are set to the channel's median first, so the spline does not
+    ring against the zeros, and the result is clipped to the range of the data."""
+    from scipy import ndimage
+    d = data if data.ndim == 3 else data[None]
+    out = np.empty((d.shape[0],) + tuple(shape), np.float32)
+    for i, ch in enumerate(d):
+        v = ch[valid]
+        filled = np.where(valid, ch, np.median(v)).astype(np.float64)
+        ndimage.affine_transform(filled, M, offset, shape, output=out[i], order=order, mode="nearest")
+        np.clip(out[i], v.min(), v.max(), out=out[i])
+    return out if data.ndim == 3 else out[0]
+
+
+class Crop(NamedTuple):
+    """Where the crop is: a box in the image turned by ``angle`` degrees (0: in the canvas itself)."""
+    x: int
+    y: int
+    w: int
+    h: int
+    angle: float = 0.0
+
+
+def crop_to_data(path: Path, full: Path, mode: str = "rotate", log=print) -> Crop:
+    """Crop the stacked mosaic at ``path`` to the largest rectangle with data everywhere, after
+    moving the uncropped file to ``full``. ``mode`` "rect" keeps the canvas upright; "rotate" also
+    tries every angle and turns the image when that keeps clearly more (MIN_ROTATE_GAIN)."""
     from astropy.io import fits
+    if mode not in ("rotate", "rect"):
+        raise ValueError(f"crop mode {mode!r}")
     with fits.open(path) as hdul:
         data = hdul[0].data
         if data is None or data.ndim not in (2, 3):
             raise tools.StageError(f"{path.name}: expected a 2-D or 3-D image")
         H, W = data.shape[-2:]
-        box = valid_box(valid_mask(data))
+        valid = valid_mask(data)
+        box = valid_box(valid)
         if box is None:
             raise tools.StageError(f"{path.name} has no pixels with data")
         x, y, w, h = box
         if (w, h) == (W, H):
             log(f"mosaic: {path.name} ({W}x{H}) has data everywhere; not cropped")
-            return box
+            return Crop(*box)
+        n_valid = int(valid.sum())
         header = hdul[0].header.copy()
-        shift_wcs(header, x, y)
-        header.add_history(f"darkroom: cropped to x={x} y={y} w={w} h={h} of {W}x{H} (data everywhere)")
-        cropped = fits.HDUList([fits.PrimaryHDU(np.ascontiguousarray(data[..., y:y + h, x:x + w]),
-                                                header=header)] + list(hdul[1:]))
+        turn = None
+        if mode == "rotate" and _has_sip(header):
+            log("mosaic: the WCS has SIP distortion terms, which a turned crop cannot carry; cropping upright")
+        elif mode == "rotate":
+            from scipy import ndimage
+            trimmed = ndimage.binary_erosion(valid, np.ones((3, 3), bool), iterations=EDGE_TRIM)
+            a = best_angle(trimmed)
+            if a != 0:
+                rb = valid_box(rotate_mask(trimmed, a))
+                if rb and rb[2] * rb[3] >= MIN_ROTATE_GAIN * w * h:
+                    turn = (a, rb)
+                else:
+                    log(f"mosaic: turning the image by {a:g} deg would keep less than "
+                        f"{100 * (MIN_ROTATE_GAIN - 1):.0f}% more; cropping upright")
+        if turn:
+            a, (x, y, w, h) = turn
+            M, off, _ = rotation(valid.shape, a)
+            off = off + M @ np.array([y, x], float)
+            pixels = resample(data, valid, M, off, (h, w))
+            rotate_wcs(header, M, off)
+            header.add_history(f"darkroom: turned {a:g} deg and cropped to {w}x{h} of {W}x{H} (data everywhere)")
+            crop = Crop(x, y, w, h, a)
+        else:
+            shift_wcs(header, x, y)
+            header.add_history(f"darkroom: cropped to x={x} y={y} w={w} h={h} of {W}x{H} (data everywhere)")
+            pixels = np.ascontiguousarray(data[..., y:y + h, x:x + w])
+            crop = Crop(x, y, w, h)
+        cropped = fits.HDUList([fits.PrimaryHDU(pixels, header=header)] + list(hdul[1:]))
         tmp = path.with_name(path.stem + ".crop-tmp.fit")
         cropped.writeto(tmp, overwrite=True)
     os.replace(path, full)
     os.replace(tmp, path)
-    log(f"mosaic: cropped {W}x{H} to {w}x{h} at x={x}, y={y} (the largest rectangle with data in every "
-        f"pixel; {100 * w * h / (W * H):.0f}% of the canvas); uncropped stack kept as {full.name}")
-    return box
+    kept = f"{100 * w * h / n_valid:.0f}% of the pixels with data, {100 * w * h / (W * H):.0f}% of the canvas"
+    if crop.angle:
+        log(f"mosaic: turned the {W}x{H} canvas {abs(crop.angle):g} deg "
+            f"{'clockwise' if crop.angle > 0 else 'anticlockwise'} and cropped it to {w}x{h}, the largest "
+            f"rectangle with data in every pixel at any angle ({kept}; the largest upright one, "
+            f"{box[2]}x{box[3]}, keeps {100 * box[2] * box[3] / n_valid:.0f}%). North is no longer up; "
+            f"[stack] mosaic_crop = \"rect\" keeps the canvas upright. Uncropped stack kept as {full.name}")
+    else:
+        log(f"mosaic: cropped {W}x{H} to {w}x{h} at x={x}, y={y} (the largest rectangle with data in every "
+            f"pixel; {kept}); uncropped stack kept as {full.name}")
+    return crop
+
+

@@ -40,6 +40,7 @@ The Seestar's sensor is not cooled, so this matters more than it would with a co
 | `keep_stars` | 100 (off) | percent of frames kept, most stars first |
 | `clean` | false | delete `<work>/process` after a successful stack |
 | `mosaic` | false (`init` turns it on for a mosaic) | plate-solve every frame and stack them onto one canvas; see [mosaics](usage.md#mosaics) |
+| `mosaic_crop` | `rotate` | how a mosaic's canvas is cropped: `rotate`, `rect` or `none`; see below |
 
 ### Framing
 
@@ -58,6 +59,8 @@ darkroom stack --work m31 --reuse-registration --framing cog --out stack_cog
 To adopt one, set `[stack] framing` and restack.
 
 With `mosaic = true` the framing is always `max`, followed by a crop to the largest rectangle with data everywhere. A `framing` set to something else is ignored with a warning.
+
+`mosaic_crop` (flag `--mosaic-crop`) decides that crop. `rotate`, the default, tries every angle and turns the image when the largest rectangle at the best angle keeps at least 10% more pixels than the largest upright one; otherwise it crops upright. A turned image no longer has north up, and it is resampled once more (cubic spline). `rect` always crops upright, as darkroom did before `rotate` existed, and keeps the orientation. `none` leaves the whole canvas, empty parts and all, which the later stages do not expect; use it only to crop by hand. Work directories stacked before this setting existed count as up to date, so to re-crop one with `rotate`, restack it (`darkroom stack --reuse-registration` is enough).
 
 ### Frame selection
 

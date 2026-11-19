@@ -1,4 +1,5 @@
 """Mosaic mode: pointing spread, catalogue prefill, crop with WCS, plumbing (synthetic data only)."""
+import math
 import re
 from pathlib import Path
 
@@ -231,7 +232,8 @@ def test_crop_to_data_keeps_the_sky_position_of_every_pixel(tmp_path):
     fits.PrimaryHDU(data, header=wcs_header(H, W)).writeto(p)
     before = WCS(fits.getheader(p), naxis=2).pixel_to_world_values(100, 150)   # numpy col 100, row 150
     msgs = []
-    x, y, w, h = mosaic.crop_to_data(p, tmp_path / "stack_full.fit", log=msgs.append)
+    x, y, w, h, angle = mosaic.crop_to_data(p, tmp_path / "stack_full.fit", mode="rect", log=msgs.append)
+    assert angle == 0
     full = fits.getdata(tmp_path / "stack_full.fit")
     np.testing.assert_array_equal(full, data)                                  # uncropped file kept as is
     hdr = fits.getheader(p)
@@ -249,8 +251,155 @@ def test_crop_to_data_keeps_the_sky_position_of_every_pixel(tmp_path):
 def test_crop_to_data_full_frame_is_untouched(tmp_path):
     p = tmp_path / "stack.fit"
     fits.PrimaryHDU(np.ones((3, 8, 6), np.float32), header=wcs_header(8, 6)).writeto(p)
-    assert mosaic.crop_to_data(p, tmp_path / "stack_full.fit", log=lambda m: None) == (0, 0, 6, 8)
+    assert mosaic.crop_to_data(p, tmp_path / "stack_full.fit", log=lambda m: None) == (0, 0, 6, 8, 0.0)
     assert not (tmp_path / "stack_full.fit").exists() and fits.getheader(p)["CRPIX1"] == 3.5
+
+
+def test_largest_rect_is_exact():
+    rng = np.random.default_rng(3)
+    for _ in range(20):
+        valid = rng.random((rng.integers(1, 30), rng.integers(1, 30))) < 0.8
+        y, x, h, w = mosaic.largest_rect(valid)
+        assert valid[y:y + h, x:x + w].all() and h * w == brute_force_area(valid)
+    valid, _ = ragged(60, 40)
+    assert np.prod(mosaic.largest_rect(valid)[2:]) == brute_force_area(valid)
+    assert mosaic.largest_rect(np.zeros((4, 5), bool))[2:] == (0, 0)
+
+
+def band(h=150, w=200, deg=20.0, length=170, width=50):
+    """A diagonal band of valid pixels, its long side at ``deg`` degrees from the columns
+    (numpy row index growing with the angle), like the Alnilam mosaic."""
+    yy, xx = np.mgrid[:h, :w]
+    t = np.radians(deg)
+    u = (xx - w / 2) * np.cos(t) + (yy - h / 2) * np.sin(t)
+    v = -(xx - w / 2) * np.sin(t) + (yy - h / 2) * np.cos(t)
+    return (abs(u) < length / 2) & (abs(v) < width / 2)
+
+
+@pytest.mark.parametrize("deg", [20.0, -33.0])
+def test_best_angle_lines_up_a_diagonal_band(deg):
+    valid = band(deg=deg)
+    a = mosaic.best_angle(valid)
+    assert a == pytest.approx(deg, abs=0.5)
+    y, x, h, w = mosaic.largest_rect(mosaic.rotate_mask(valid, a))
+    assert h * w >= 0.9 * valid.sum()                                  # nearly all of the band
+    assert np.prod(mosaic.largest_rect(valid)[2:]) < 0.5 * valid.sum()  # upright keeps under half
+
+
+def test_best_angle_keeps_a_nearly_upright_mosaic_upright():
+    # Rosette-like: one tall block with a short tile missing at each bottom corner
+    valid = np.ones((200, 120), bool)
+    valid[185:, :45] = valid[185:, 80:] = False
+    assert mosaic.best_angle(valid) == 0
+    valid, _ = ragged()
+    assert mosaic.best_angle(valid[::3, ::3]) == 0
+
+
+def test_rotation_maps_the_canvas_centre_and_fits_the_corners():
+    M, off, (h, w) = mosaic.rotation((100, 60), 30)
+    assert (h, w) == (math.ceil(60 * 0.5 + 100 * np.cos(np.radians(30))),
+                      math.ceil(60 * np.cos(np.radians(30)) + 100 * 0.5))
+    np.testing.assert_allclose(M @ [(h - 1) / 2, (w - 1) / 2] + off, [49.5, 29.5])
+    np.testing.assert_allclose(M @ M.T, np.eye(2), atol=1e-12)
+    assert mosaic.rotation((100, 60), 0)[2] == (100, 60)
+
+
+def siril_header(h, w):
+    """WCS as Siril writes it: CDELT plus a PC matrix (a slight roll, like the real stacks)."""
+    hdr = fits.Header()
+    t = np.radians(0.73)
+    hdr.update({"CTYPE1": "RA---TAN", "CTYPE2": "DEC--TAN", "CRVAL1": 84.08, "CRVAL2": -1.76,
+                "CRPIX1": w / 2 + 0.5, "CRPIX2": h / 2 + 0.5, "CDELT1": -1.109e-3, "CDELT2": 1.109e-3,
+                "PC1_1": np.cos(t), "PC1_2": np.sin(t), "PC2_1": -np.sin(t), "PC2_2": np.cos(t),
+                "STACKCNT": 173})
+    return hdr
+
+
+@pytest.mark.parametrize("kind", ["pc", "cd", "crota"])
+def test_rotate_wcs_keeps_every_pixel_on_the_sky(kind):
+    hdr = siril_header(150, 200) if kind == "pc" else wcs_header(150, 200)
+    if kind == "crota":
+        for k in ("CD1_1", "CD1_2", "CD2_1", "CD2_2"):
+            del hdr[k]
+        hdr.update({"CDELT1": -1.1e-3, "CDELT2": 1.0e-3, "CROTA2": 12.0})
+    before = WCS(hdr, naxis=2)
+    M, off, _ = mosaic.rotation((150, 200), -27.5)
+    off = off + M @ [13, 21]                                            # and a crop at row 13, col 21
+    after_hdr = hdr.copy()
+    mosaic.rotate_wcs(after_hdr, M, off)
+    assert "CROTA2" not in after_hdr
+    after = WCS(after_hdr, naxis=2)
+    rng = np.random.default_rng(5)
+    rows, cols = rng.uniform(0, 120, 30), rng.uniform(0, 150, 30)
+    src = M @ np.vstack([rows, cols]) + off[:, None]
+    np.testing.assert_allclose(after.pixel_to_world_values(cols, rows),
+                               before.pixel_to_world_values(src[1], src[0]), atol=1e-10)
+
+
+def test_rotated_crop_keeps_stars_on_the_sky(tmp_path):
+    h, w = 150, 200
+    valid = band(h, w, deg=25)
+    yy, xx = np.mgrid[:h, :w]
+    img = np.full((h, w), 0.1, np.float32)
+    stars = [(75.3, 100.6), (91.7, 136.2), (58.4, 63.9), (85.6, 94.8)]
+    for sy, sx in stars:
+        img += np.exp(-((yy - sy) ** 2 + (xx - sx) ** 2) / (2 * 1.6 ** 2)).astype(np.float32)
+    data = np.stack([img, img * 0.9, img * 1.1]) * valid
+    p = tmp_path / "stack.fit"
+    fits.PrimaryHDU(data, header=siril_header(h, w)).writeto(p)
+    before = WCS(fits.getheader(p), naxis=2)
+    msgs = []
+    crop = mosaic.crop_to_data(p, tmp_path / "stack_full.fit", log=msgs.append)
+    assert crop.angle == pytest.approx(25, abs=0.5)
+    out = fits.getdata(p)
+    hdr = fits.getheader(p)
+    assert out.shape == (3, crop.h, crop.w) and out.dtype.name == "float32" and (out > 0).all()
+    assert crop.w * crop.h > 1.5 * np.prod(mosaic.valid_box(valid)[2:])
+    assert hdr["STACKCNT"] == 173 and "turned" in str(hdr["HISTORY"])
+    assert any("North is no longer up" in m and "clockwise" in m and 'mosaic_crop = "rect"' in m for m in msgs)
+    np.testing.assert_array_equal(fits.getdata(tmp_path / "stack_full.fit"), data)
+    after = WCS(hdr, naxis=2)
+    # every star found in the turned crop is where the WCS of the canvas put it, to well under a pixel
+    lum = out[0] - np.median(out[0])
+    seen = 0
+    for sy, sx in stars:
+        ra, dec = before.pixel_to_world_values(sx, sy)
+        cx, cy = after.world_to_pixel_values(ra, dec)
+        iy, ix = int(round(float(cy))), int(round(float(cx)))
+        if not (4 <= iy < crop.h - 4 and 4 <= ix < crop.w - 4):
+            continue
+        win = np.clip(lum[iy - 4:iy + 5, ix - 4:ix + 5], 0, None)
+        gy, gx = np.mgrid[-4:5, -4:5]
+        assert np.hypot((gy * win).sum() / win.sum() + iy - cy, (gx * win).sum() / win.sum() + ix - cx) < 0.1
+        seen += 1
+    assert seen >= 3
+
+
+def test_rect_mode_and_sip_stay_upright(tmp_path):
+    valid = band(deg=25)
+    data = np.stack([valid * 1.0] * 3).astype(np.float32)
+    p = tmp_path / "stack.fit"
+    fits.PrimaryHDU(data, header=siril_header(*valid.shape)).writeto(p)
+    assert mosaic.crop_to_data(p, tmp_path / "full.fit", mode="rect", log=lambda m: None).angle == 0
+    hdr = siril_header(*valid.shape)
+    hdr.update({"CTYPE1": "RA---TAN-SIP", "CTYPE2": "DEC--TAN-SIP", "A_ORDER": 2, "B_ORDER": 2})
+    fits.PrimaryHDU(data, header=hdr).writeto(p, overwrite=True)
+    msgs = []
+    assert mosaic.crop_to_data(p, tmp_path / "full.fit", log=msgs.append).angle == 0
+    assert any("SIP" in m for m in msgs)
+    with pytest.raises(ValueError):
+        mosaic.crop_to_data(p, tmp_path / "full.fit", mode="none")
+
+
+def test_rotate_mode_does_not_turn_for_a_small_gain(tmp_path, monkeypatch):
+    valid = band(deg=25)
+    data = np.stack([valid * 1.0] * 3).astype(np.float32)
+    p = tmp_path / "stack.fit"
+    fits.PrimaryHDU(data, header=siril_header(*valid.shape)).writeto(p)
+    monkeypatch.setattr(mosaic, "MIN_ROTATE_GAIN", 100.0)
+    msgs = []
+    assert mosaic.crop_to_data(p, tmp_path / "full.fit", log=msgs.append).angle == 0
+    assert any("cropping upright" in m for m in msgs)
 
 
 def test_shift_wcs_without_wcs_is_harmless():
@@ -286,6 +435,28 @@ def test_mosaic_setting_flag_and_framing(tmp_path, capsys):
         cli.build_parser().parse_args(["stack", "--work", str(tmp_path), "--mosaic", "--no-mosaic"])
     capsys.readouterr()
     assert config.SCHEMA["stack"]["mosaic"][:2] == ("bool", False)
+
+
+def test_mosaic_crop_setting_flag_and_record(tmp_path, capsys):
+    subs = tmp_path / "subs"
+    subs.mkdir()
+    base = f'[target]\nsubs = "{subs}"\ndark = "none"\n'
+    (tmp_path / "darkroom.toml").write_text(base + "[stack]\nmosaic = true\n")
+    a = cli.build_parser().parse_args(["stack", "--work", str(tmp_path)])
+    t = cli._stack_table(cli._settings(a))
+    assert t["mosaic_crop"] == "rotate" and "mosaic_crop" not in stages.result_params("stack", t)
+    a = cli.build_parser().parse_args(["stack", "--work", str(tmp_path), "--mosaic-crop", "rect"])
+    t = cli._stack_table(cli._settings(a))
+    assert stages.result_params("stack", t)["mosaic_crop"] == "rect"
+    a = cli.build_parser().parse_args(["stack", "--work", str(tmp_path), "--mosaic-crop", "rect", "--no-mosaic"])
+    assert "mosaic_crop" not in stages.result_params("stack", cli._stack_table(cli._settings(a)))
+    (tmp_path / "darkroom.toml").write_text(base + '[stack]\nmosaic_crop = "tilt"\n')
+    with pytest.raises(config.ConfigError, match="mosaic_crop"):
+        cli._settings(cli.build_parser().parse_args(["stack", "--work", str(tmp_path)]))
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(["stack", "--work", str(tmp_path), "--mosaic-crop", "tilt"])
+    capsys.readouterr()
+    assert config.SCHEMA["stack"]["mosaic_crop"][:2] == ("str", "rotate")
 
 
 def test_presets_s30_and_s30_pro_match_their_own_subs(tmp_path):
@@ -418,6 +589,10 @@ def test_mosaic_stack_prefills_solves_recovers_and_crops(tmp_path, monkeypatch, 
     stages.stack(work, subs, None, mosaic=True, reuse=True, out="stack_b")
     assert "seqplatesolve" not in fake.scripts[-1] and "-overlap_norm" in fake.scripts[-1]
     assert (work / "stack_b.fit").is_file() and (work / "stack_b_full.fit").is_file()
+    # mosaic_crop = "none" leaves the canvas as Siril wrote it
+    stages.stack(work, subs, None, mosaic=True, reuse=True, out="stack_c", mosaic_crop="none")
+    assert fits.getdata(work / "stack_c.fit").shape == (3, 40, 30) and not (work / "stack_c_full.fit").exists()
+    assert 'mosaic_crop = "none"' in capsys.readouterr().out
 
 
 def test_mosaic_stack_fails_when_nothing_solves(tmp_path, monkeypatch):
