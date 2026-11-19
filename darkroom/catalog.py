@@ -74,6 +74,31 @@ def failed_requests(log_text: str) -> list[Request]:
     return out
 
 
+_SPCC_HTTP = re.compile(r"HTTP range request failed with code (\d+) for URL (\S+)")
+
+
+def spcc_server_failure(log_text: str) -> str | None:
+    """A plain explanation when Siril failed to download its SPCC star spectra, else None.
+
+    SPCC reads Gaia DR3 XP spectra from Siril's own mirrors (Zenodo first). When the first
+    mirror answers with an error, Siril 1.4.5 logs "Query failed on mirror ..., trying
+    alternatives..." and then crashes instead of trying the next one, so the log simply ends."""
+    hits = _SPCC_HTTP.findall(log_text)
+    if not hits or "Query failed on mirror" not in log_text:
+        return None
+    codes = sorted({int(c) for c, _ in hits})
+    host = urllib.parse.urlparse(hits[-1][1]).netloc or "its catalogue server"
+    if 429 in codes:
+        why = f"{host} refused with HTTP 429 (too many requests): it is rate-limiting this machine"
+    elif any(c >= 500 for c in codes):
+        why = f"{host} answered with HTTP {'/'.join(map(str, codes))}: the server is having problems"
+    else:
+        why = f"{host} answered with HTTP {'/'.join(map(str, codes))}"
+    return (f"Siril could not download the star spectra that colour calibration (SPCC) needs: {why}. "
+            "Siril 1.4.5 then stops (it crashes instead of trying its other mirrors). This is not a "
+            "problem with the image. Wait a few minutes (longer after HTTP 429) and run the stage again.")
+
+
 def adql(ra: float, dec: float, radius_deg: float, maglim: float) -> str:
     """The query Siril sends to VizieR, rewritten for the Gaia archive's own table. Like
     Siril, the radius is given in degrees to two decimals."""

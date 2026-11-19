@@ -304,6 +304,9 @@ def color(work: Path, sensor="Sony IMX585", filt="UV/IR Block", focal=160.0, pix
         text = log.read_text(errors="replace") if log.is_file() else ""
         requests = cat.failed_requests(text)
         if not requests:
+            server = cat.spcc_server_failure(text)
+            if server:
+                raise tools.StageError(f"color: {server}\n(log: {log})") from None
             raise
         if not catalog_fallback:
             raise tools.StageError(f"{first}\n(Siril could not download its star catalogue; the fallback "

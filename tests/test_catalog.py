@@ -153,3 +153,39 @@ def test_color_reports_a_failed_fetch(monkeypatch, tmp_path):
     fake_siril(monkeypatch, tmp_path, ["fail", "ok"])
     with pytest.raises(tools.StageError, match="(?s)color.ssf failed.*fallback also failed.*timed out"):
         stages.color(tmp_path)
+
+
+SPCC_429 = """log: Getting stars from online catalogue Gaia DR3 xp_sampled for PCC, with a radius of 5.07 degrees and limit magnitude 12.49
+log: HTTP range request failed with code 429 for URL https://zenodo.org/records/17988559/files/siril_cat1_healpix8_xpsamp_21.dat
+log: Failed to read data entries via HTTP
+log: Query failed on mirror https://zenodo.org/records/17988559/files, trying alternatives...
+"""
+
+
+def test_spcc_server_failure_rate_limit():
+    msg = catalog.spcc_server_failure(SPCC_429)
+    assert msg and "HTTP 429" in msg and "zenodo.org" in msg and "Wait" in msg
+
+
+def test_spcc_server_failure_server_error():
+    msg = catalog.spcc_server_failure(SPCC_429.replace("code 429", "code 502"))
+    assert msg and "HTTP 502" in msg and "problems" in msg
+
+
+def test_spcc_server_failure_none_without_mirror_failover():
+    assert catalog.spcc_server_failure("log: Found a solution for color calibration using 1241 stars.") is None
+    assert catalog.spcc_server_failure(SPCC_429.replace("Query failed on mirror", "x")) is None
+
+
+def test_color_explains_an_spcc_server_failure(monkeypatch, tmp_path):
+    """Siril crashes after the SPCC mirror refuses; the stage says why instead of retrying."""
+    monkeypatch.setattr(catalog, "fetch", lambda *a, **k: pytest.fail("must not fetch"))
+
+    def run_script(script, log_path):
+        log_path.write_text(SPCC_429)
+        raise tools.StageError("siril-cli exited with code -11")
+
+    monkeypatch.setattr(stages.siril, "run_script", run_script)
+    (tmp_path / stages.BGE).write_bytes(b"bge")
+    with pytest.raises(tools.StageError, match="(?s)star spectra.*HTTP 429.*Wait"):
+        stages.color(tmp_path)

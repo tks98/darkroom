@@ -139,7 +139,11 @@ cheap to fix at the stage that caused them and expensive to notice at the end.
 ### After `color`
 - Read the SPCC lines in `logs/color.log`: how many stars were used, and
   whether Siril warned that the fit was imprecise. Report the warning; do not
-  hide it.
+  hide it. Through the Seestar's dual-band LP filter it is expected; Siril's
+  narrowband mode did not change the result.
+- If the stage stops because Siril "could not download the star spectra",
+  Siril's SPCC server is down or rate-limiting (HTTP 429). Wait and rerun the
+  stage; do not skip colour calibration.
 - The plate-solve result (pixel scale, field centre) should match the camera.
 
 ### After `denoise`

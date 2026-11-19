@@ -56,7 +56,7 @@ The first time you process a new target, go one stage at a time (`--to stack`, t
 
 - After `stack`, check how many frames were kept (`logs/stack.log`) and that stars are round into the corners.
 - After `bge`, the sky should be even, and `bge_background.fits` should be a smooth gradient with no trace of the target.
-- After `color`, read the SPCC lines in `logs/color.log`. Siril says how many stars it used and warns when the fit is imprecise.
+- After `color`, read the SPCC lines in `logs/color.log`. Siril says how many stars it used and warns when the fit is imprecise. Through the Seestar's dual-band LP filter the warning is expected: on the Rosette and Orion-belt mosaics it appeared every time, and Siril's narrowband mode gave the same result (see [history](history.md#colour-through-the-lp-filter)).
 - After `starnet`, open `starless.tif` and look for blotches where bright stars were, or for detail that went with the stars.
 - After `finish`, look at the core, the corners and the edge of the target at full size. The sky should be neutral, nothing should be clipped, and faint stars should still be there.
 
