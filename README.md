@@ -22,7 +22,7 @@ On the left is the stack the Seestar app built during the session (402 frames), 
 
 Seven stages, each reading the previous one's output from a work directory:
 
-1. `stack`: Siril subtracts the dark, aligns the frames, drops the blurriest ones and those with stretched stars, and stacks the rest.
+1. `stack`: Siril subtracts the dark (and, for a cooled camera, the bias and flats: master files or folders of raw frames), aligns the frames, drops the blurriest ones and those with stretched stars, and stacks the rest.
 2. `bge`: GraXpert removes the sky gradient.
 3. `color`: Siril plate-solves the image and calibrates the colour against Gaia DR3.
 4. `denoise`: GraXpert's denoise model, run on the Apple GPU.
@@ -55,7 +55,7 @@ Setup ends with `darkroom doctor`, which checks every tool and prints a fix for 
 - [Installing](docs/install.md): requirements, `setup.sh`, `darkroom doctor`, environment variables, tests.
 - [Running darkroom in Docker](docs/docker.md): the Linux image, for Linux, Windows or anywhere you would rather not install Siril and GraXpert.
 - [Using darkroom](docs/usage.md): `init` and `run`, single stages, what to check after each stage, comparing variants, disk space.
-- [Configuration](docs/configuration.md): every setting with its default, dark selection, framing, star reduction, cropping, and the galaxy, cluster and nebula looks.
+- [Configuration](docs/configuration.md): every setting with its default, dark selection, bias and flats, framing, star reduction, cropping, and the galaxy, cluster and nebula looks.
 - [How it works](docs/pipeline.md): what each stage does, with numbers from M31.
 - [Troubleshooting](docs/troubleshooting.md): GraXpert on the GPU, the catalogue server, mismatched darks, StarNet and Gatekeeper, Siril's Python crashing on macOS, the SPCC server.
 - [Using darkroom with an AI agent](docs/agents.md): the agent skill, for Claude Code or any agent that loads skills, and `AGENTS.md`.

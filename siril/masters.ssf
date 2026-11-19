@@ -1,0 +1,37 @@
+############################################
+# darkroom: stack raw calibration frames into masters (Siril 1.4)
+# Rendered by `darkroom stack` when [target] bias, dark or flats is a folder of
+# raw frames, for the masters that are missing or out of date. Each *_FRAMES
+# folder holds links to the raw frames (darkroom makes it, so Siril never has
+# to work inside the user's folder); the sequence goes to a scratch folder
+# next to it and the master to <work>/masters. Template syntax: see
+# darkroom/siril.py.
+############################################
+requires 1.4.0
+setext fit
+# masters in 32-bit float: averaging many 16-bit frames gives more than 16 bits
+set32bits
+
+# Master bias: average with winsorized rejection, no normalisation
+{{if BIAS_FRAMES}}cd "{{BIAS_FRAMES=}}"
+{{if BIAS_FRAMES}}link bias "-out={{BIAS_SEQ=}}"
+{{if BIAS_FRAMES}}cd "{{BIAS_SEQ=}}"
+{{if BIAS_FRAMES}}stack bias rej w 3 3 -nonorm "-out={{MASTERS}}/master_bias"
+
+# Master dark: the same. It is not bias-subtracted: the lights get the whole
+# dark (bias included) subtracted, so it needs the same exposure as the lights
+{{if DARK_FRAMES}}cd "{{DARK_FRAMES=}}"
+{{if DARK_FRAMES}}link dark "-out={{DARK_SEQ=}}"
+{{if DARK_FRAMES}}cd "{{DARK_SEQ=}}"
+{{if DARK_FRAMES}}stack dark rej w 3 3 -nonorm "-out={{MASTERS}}/master_dark"
+
+# Master flat: subtract the master bias (short flats: the bias stands in for a
+# flat dark), then average with multiplicative normalisation
+{{if FLAT_FRAMES}}cd "{{FLAT_FRAMES=}}"
+{{if FLAT_FRAMES}}link flat "-out={{FLAT_SEQ=}}"
+{{if FLAT_FRAMES}}cd "{{FLAT_SEQ=}}"
+{{if FLAT_FRAMES}}{{if FLAT_BIAS}}calibrate flat "-bias={{FLAT_BIAS=}}"
+{{if FLAT_FRAMES}}{{if FLAT_BIAS}}stack pp_flat rej w 3 3 -norm=mul "-out={{MASTERS}}/master_flat"
+{{if FLAT_FRAMES}}{{ifnot FLAT_BIAS}}stack flat rej w 3 3 -norm=mul "-out={{MASTERS}}/master_flat"
+
+close

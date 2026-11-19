@@ -36,7 +36,7 @@ def test_camera_preset_contents():
     assert meta["camera"]["bayer"] == "GRBG" and meta["camera"]["sub_glob"] == "Light_*.fit"
     assert meta["filters"] == {"IRCUT": "UV/IR Block", "LP": "ZWO Seestar LP"}
     assert meta["darks"] == config.DEFAULT_CAMERA_META["darks"]
-    assert config.preset_names("cameras") == ["seestar-s30", "seestar-s30-pro"]
+    assert config.preset_names("cameras") == ["seestar-s30", "seestar-s30-pro", "zwo-asi294mc-pro"]
     assert config.preset_names("looks") == ["cluster", "galaxy", "nebula"]
 
 

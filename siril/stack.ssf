@@ -1,6 +1,6 @@
 ############################################
 # darkroom: calibrate, register, stack (Siril 1.4)
-# OSC lights (GRBG), master dark only (no flats/bias)
+# OSC lights; master dark, bias and flat each optional
 # Rendered by `darkroom stack`; the double-brace placeholders are replaced with
 # absolute, quoted paths (siril-cli starts in ~/Pictures) and the [stack]
 # settings. Template syntax (conditional lines, defaults): see darkroom/siril.py.
@@ -13,11 +13,17 @@ set16bits
 cd "{{SUBS}}"
 link light "-out={{PROCESS}}"
 
-# 2. Dark-subtract, fix hot/cold pixels from the dark, debayer
-#    (without a dark: debayer only)
+# 2. Calibrate: subtract the master dark (or, without one, the master bias), divide
+#    by the master flat, fix hot/cold pixels from the dark, debayer. Only one of
+#    these lines is kept; without any calibration frame it debayers only.
+#    The masters come from <work>/masters or [target] dark/bias/flats.
 cd "{{PROCESS}}"
-{{if DARK}}calibrate light "-dark={{DARK}}" -cc=dark 3 3 -cfa -equalize_cfa -debayer
-{{ifnot DARK}}calibrate light -cfa -equalize_cfa -debayer
+{{if DARK}}{{if FLAT}}calibrate light "-dark={{DARK}}" "-flat={{FLAT=}}" -cc=dark 3 3 -cfa -equalize_cfa -debayer
+{{if DARK}}{{ifnot FLAT}}calibrate light "-dark={{DARK}}" -cc=dark 3 3 -cfa -equalize_cfa -debayer
+{{ifnot DARK}}{{if BIAS}}{{if FLAT}}calibrate light "-bias={{BIAS=}}" "-flat={{FLAT=}}" -cfa -equalize_cfa -debayer
+{{ifnot DARK}}{{if BIAS}}{{ifnot FLAT}}calibrate light "-bias={{BIAS=}}" -cfa -equalize_cfa -debayer
+{{ifnot DARK}}{{ifnot BIAS}}{{if FLAT}}calibrate light "-flat={{FLAT=}}" -cfa -equalize_cfa -debayer
+{{ifnot DARK}}{{ifnot BIAS}}{{ifnot FLAT}}calibrate light -cfa -equalize_cfa -debayer
 
 # 3. Register: pick best reference, compute transforms (homography)
 register pp_light -2pass -maxstars=1000

@@ -1,0 +1,32 @@
+# Camera preset: ZWO ASI294MC Pro (cooled one-shot-colour astronomy camera).
+# Values checked against the FITS headers an ASIAIR writes for this camera
+# (lights, darks, bias frames and flats) and against two processed targets.
+# Settings sections ([color], ...) use the same keys as darkroom.toml and sit
+# below it and the look preset in precedence.
+#
+# The focal length depends on the telescope, so it is not set here: `darkroom
+# init` writes the FOCALLEN of the subs into darkroom.toml. Without one in the
+# headers, set [color] focal yourself.
+
+[camera]
+name = "ZWO ASI294MC Pro"
+match_keyword = "INSTRUME"           # FITS keyword that identifies the camera
+match = "ZWO ASI294MC Pro"           # ... and the text it must contain
+bayer = "RGGB"                       # expected BAYERPAT of the subs
+sub_glob = "Light_*.fit"             # light frames inside the subs folder
+
+# FITS FILTER value -> Siril SPCC filter name. Filter names are whatever the
+# capture software was told, so there is no default map; see [color] filter
+# and [color] narrowband in docs/configuration.md.
+[filters]
+
+# A dark library for dark = "auto" holds master darks; their exposure,
+# temperature and gain are read from the FITS headers. For raw darks, set
+# [target] dark to their folder instead.
+[darks]
+glob = "*.fit"
+filename = '.*'
+
+[color]
+sensor = "Sony IMX294"               # Siril's SPCC entry for this sensor
+pixel = 4.63

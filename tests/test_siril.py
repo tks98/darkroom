@@ -9,12 +9,16 @@ from darkroom import siril
 WORK = Path("/data/work dir")          # deliberately contains a space
 VALUES = {
     "stack.ssf": {"SUBS": "/data/M 31_sub", "PROCESS": str(WORK / "process"),
-                  "DARK": "/data/masters/dark.fit", "STACK": str(WORK / "stack")},
+                  "DARK": "/data/masters/dark.fit", "FLAT": "/data/masters/flat.fit", "STACK": str(WORK / "stack")},
+    "masters.ssf": {"MASTERS": str(WORK / "masters"), "BIAS_FRAMES": str(WORK / "masters/bias_frames"),
+                    "BIAS_SEQ": str(WORK / "masters/bias_seq"), "FLAT_FRAMES": str(WORK / "masters/flats_frames"),
+                    "FLAT_SEQ": str(WORK / "masters/flats_seq"), "FLAT_BIAS": str(WORK / "masters/master_bias.fit"),
+                    "DARK_FRAMES": "/data/raw darks", "DARK_SEQ": str(WORK / "masters/dark_seq")},
     "color.ssf": {"WORK": str(WORK), "FOCAL": "160", "PIXEL": "2.9", "CATALOG": "gaia",
                   "SENSOR": "Sony IMX585", "FILTER": "UV/IR Block"},
     "stretch.ssf": {"WORK": str(WORK), "ASINH": "25", "SHADOWS": "-2.5", "TARGET_BG": "0.1", "SAT": "0.35"},
     "mosaic_solve.ssf": {"SUBS": "/data/M 31_sub", "PROCESS": str(WORK / "process"), "DARK": "/data/masters/dark.fit",
-                         "NODARK": "", "FORCE": "-force ", "FRAMES": "", "MAG": "13", "FOCAL": "150", "PIXEL": "2.9"},
+                         "FLAT": "/data/masters/flat.fit", "FORCE": "-force ", "FRAMES": "", "MAG": "13", "FOCAL": "150", "PIXEL": "2.9"},
     "mosaic_stack.ssf": {"PROCESS": str(WORK / "process"), "STACK": str(WORK / "stack")},
 }
 
@@ -47,7 +51,9 @@ def test_stack_script_contents():
     text = rendered("stack.ssf")
     assert 'cd "/data/M 31_sub"' in text
     assert 'link light "-out=/data/work dir/process"' in text
-    assert '"-dark=/data/masters/dark.fit" -cc=dark 3 3 -cfa -equalize_cfa -debayer' in text
+    cal = [l for l in text.splitlines() if l.startswith("calibrate")]
+    assert cal == ['calibrate light "-dark=/data/masters/dark.fit" "-flat=/data/masters/flat.fit" -cc=dark 3 3 '
+                   '-cfa -equalize_cfa -debayer']
     assert '-weight=wfwhm -32b "-out=/data/work dir/stack"' in text
 
 

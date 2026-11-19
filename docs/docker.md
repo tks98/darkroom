@@ -30,6 +30,8 @@ docker/darkroom-docker --subs ~/astro/M31_sub --darks ~/astro/darklibrary --work
     run --work /work
 ```
 
+For bias frames and flats, put the calibration folders under one folder and mount that as `--darks`; then use, for example, `--dark /darks/darks --bias /darks/biases --flats /darks/flats`. Read-only folders are fine: darkroom stacks them from links in the work directory.
+
 Everything after `--` is passed to `darkroom`. Results land in the work folder on your machine as usual. On Linux the wrapper runs the container as your user, so the files are yours.
 
 `docker/darkroom-docker --work ~/astro/m31 -- doctor` checks the setup inside the container.

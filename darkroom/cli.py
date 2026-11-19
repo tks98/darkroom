@@ -152,12 +152,18 @@ def _stack_args(o, run=False):
     o.add("--subs", type=Path, key=("target", "subs"), metavar="DIR",
           help="directory with the light subs (*.fit; other files ignored)")
     g = o.group(o.parser.add_mutually_exclusive_group())
-    g.add("--dark", key=("target", "dark"), metavar="FILE",
-          help='master dark; also "auto" (pick from the dark library) or "none"')
+    g.add("--dark", key=("target", "dark"), metavar="PATH",
+          help='master dark, or a folder of raw darks to stack into one; also "auto" (pick from the dark '
+               'library) or "none"')
     g.add("--dark-library", type=Path, key=("target", "dark_library"), metavar="DIR",
           help="master-dark library; picks the dark matching the subs' exposure, gain and temperature")
     g.add("--no-dark", dest="dark", action="store_const", const="none", key=("target", "dark"),
           help="stack without dark subtraction")
+    o.add("--bias", key=("target", "bias"), metavar="PATH",
+          help='master bias, or a folder of raw bias frames; "none" for no bias. It calibrates the flats, '
+               "and the lights when there is no dark")
+    o.add("--flats", key=("target", "flats"), metavar="PATH",
+          help='master flat, or a folder of raw flats (calibrated with the bias); "none" for no flats')
     if run:
         return
     o.add("--framing", choices=config.FRAMINGS, default="min", key=("stack", "framing"),
@@ -204,6 +210,9 @@ def _color_args(o):
     o.add("--catalog", default="gaia", key=("color", "catalog"), help="plate-solve catalogue")
     o.add("--whiteref", default="Average Spiral Galaxy", metavar="NAME", key=("color", "whiteref"),
           help="SPCC white reference")
+    o.add("--narrowband", default="none", metavar="R,G,B", key=("color", "narrowband"),
+          help='SPCC narrowband mode instead of --filter, for a dual-band filter: wavelength/bandwidth in nm '
+               'for R, G and B, e.g. "656.28/12,500.7/12,500.7/12" (H-alpha, OIII, OIII); "none" = off')
     o.add("--no-catalog-fallback", dest="catalog_fallback", action="store_false",
           key=("color", "catalog_fallback"),
           help="do not fetch Gaia DR3 from the ESA archive when Siril's catalogue server is unreachable")
@@ -322,10 +331,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--work", required=True, type=Path, metavar="DIR", help="work directory (created if missing)")
     p.add_argument("--subs", required=True, type=Path, metavar="DIR", help="directory with the light subs")
     g = p.add_mutually_exclusive_group()
-    g.add_argument("--dark", type=Path, metavar="FILE", help="master dark to use")
+    g.add_argument("--dark", type=Path, metavar="PATH",
+                   help="master dark, or a folder of raw darks (stacked into a master at stack time)")
     g.add_argument("--dark-library", type=Path, metavar="DIR",
                    help="master-dark library; the dark is picked automatically at stack time")
     g.add_argument("--no-dark", action="store_true", help="stack without dark subtraction")
+    p.add_argument("--bias", type=Path, metavar="PATH",
+                   help="master bias, or a folder of raw bias frames (calibrates the flats, and the lights "
+                        "when there is no dark)")
+    p.add_argument("--flats", type=Path, metavar="PATH", help="master flat, or a folder of raw flats")
     p.add_argument("--camera", metavar="NAME", help="camera preset name or .toml path "
                    "(default: detected from the FITS header)")
     p.add_argument("--look", metavar="NAME", default="galaxy", help="look preset name or .toml path")
@@ -426,15 +440,28 @@ def _settings(a) -> config.Settings:
     return config.resolve(a.work, a.config, _overrides(a))
 
 
-def _stack_table(s: config.Settings) -> dict:
-    """[stack] settings plus the subs folder and the dark to use (auto-selected if asked)."""
+def _lights_survey(subs: Path, glob: str):
     from . import darks
+    if not subs.is_dir():
+        raise tools.StageError(f"subs directory not found: {subs}")
+    files = darks.list_subs(subs, glob) or darks.list_subs(subs, "*.fit")
+    if not files:
+        raise tools.StageError(f"no *.fit files in {subs}")
+    return darks.survey(files)
+
+
+def _stack_table(s: config.Settings, work: Path | None = None) -> dict:
+    """[stack] settings plus the subs folder and the master dark, bias and flat to calibrate the
+    lights with: a dark picked from the library if asked, and masters stacked from folders of raw
+    frames into <work>/masters (only when they are missing or out of date)."""
+    from . import calib, darks
     t = s["target"]
     if not t["subs"] or not t["dark"]:
         raise tools.StageError("the stack stage needs --subs and --dark (or --dark-library / --no-dark), "
                                "or [target] subs and dark in darkroom.toml")
     subs = Path(t["subs"]).expanduser().resolve()
     glob = s.camera_meta["camera"]["sub_glob"]
+    sv = None
     if t["dark"] == "none":
         dark = None
         print("dark: none (stacking without dark subtraction)", flush=True)
@@ -442,12 +469,7 @@ def _stack_table(s: config.Settings) -> dict:
         if not t["dark_library"]:
             raise tools.StageError('dark = "auto" needs a dark library: set [target] dark_library or pass '
                                    "--dark-library DIR (or give a master dark with --dark FILE)")
-        if not subs.is_dir():
-            raise tools.StageError(f"subs directory not found: {subs}")
-        files = darks.list_subs(subs, glob) or darks.list_subs(subs, "*.fit")
-        if not files:
-            raise tools.StageError(f"no *.fit files in {subs}")
-        sv = darks.survey(files)
+        sv = _lights_survey(subs, glob)
         if len(sv.exposures) > 1:
             raise tools.StageError("the subs have more than one exposure time ("
                                    + ", ".join(f"{e:g} s" for e in sv.exposures)
@@ -457,7 +479,22 @@ def _stack_table(s: config.Settings) -> dict:
         dark = dark.resolve()
     else:
         dark = Path(t["dark"]).expanduser().resolve()
-    table = {"subs": subs, "dark": dark, "sub_glob": glob, **s["stack"]}
+    picked = t["dark"] == "auto"            # select_dark has checked exposure, gain and temperature
+    sources = {k: None if t[k] == "none" else Path(t[k]).expanduser().resolve() for k in ("bias", "flats")}
+    cal = calib.Calibration(dark=dark)
+    if dark is not None and not picked or any(sources.values()):
+        say = lambda m: print(m, flush=True)
+        if sv is None and subs.is_dir():    # subs not there: stack() says so, or run keeps the stack
+            try:
+                sv = _lights_survey(subs, glob)
+            except tools.StageError as e:
+                say(f"WARNING: cannot check the calibration frames against the lights: {e}")
+        cal = calib.prepare(work, sv, dark=None if picked else dark, bias=sources["bias"],
+                            flats=sources["flats"], log=say)
+        if picked:
+            cal.dark, cal.bias = dark, None
+    table = {"subs": subs, "dark": cal.dark, "bias": cal.bias, "flats": cal.flats, "sub_glob": glob,
+             **s["stack"]}
     if table["mosaic"] and table["framing"] != "max":
         if s.sources[("stack", "framing")] != "built-in":
             print(f"WARNING: [stack] framing = {table['framing']} ({s.sources[('stack', 'framing')]}) is "
@@ -476,14 +513,14 @@ def _call(stage: str, work: Path, s: config.Settings, table: dict | None = None,
         stages.stack(work, table["subs"], table["dark"], table["framing"], table["keep_fwhm"],
                      table["keep_round"], table["clean"], sub_glob=table["sub_glob"],
                      keep_bkg=table["keep_bkg"], keep_stars=table["keep_stars"], mosaic=table["mosaic"],
-                     mosaic_crop=table["mosaic_crop"],
+                     mosaic_crop=table["mosaic_crop"], bias=table.get("bias"), flat=table.get("flats"),
                      focal=s["color"]["focal"], pixel=s["color"]["pixel"], **extra)
     elif stage == "bge":
         stages.bge(work, s["bge"]["smoothing"])
     elif stage == "color":
         c = s["color"]
         stages.color(work, c["sensor"], c["filter"], c["focal"], c["pixel"], c["catalog"], c["whiteref"],
-                     c["catalog_fallback"])
+                     c["catalog_fallback"], c["narrowband"])
     elif stage == "denoise":
         stages.denoise(work, s["denoise"]["strength"], s["denoise"]["cpu"])
     elif stage == "deconv":
@@ -562,6 +599,10 @@ def _init(a) -> None:
     if a.no_dark:
         ordered[("target", "dark")] = "none"
         dark_line = "none (no dark subtraction)"
+    elif a.dark and a.dark.expanduser().is_dir():
+        d = a.dark.expanduser().resolve()
+        ordered[("target", "dark")] = str(d)
+        dark_line = _calibration_line("dark", d, sv, notes)
     elif a.dark:
         d = a.dark.expanduser().resolve()
         tools.require_file(d, "master dark")
@@ -572,6 +613,7 @@ def _init(a) -> None:
             notes.append(f"the master dark is {info.exposure:g} s but the subs are {sv.exposure:g} s")
         if info.temp is not None and sv.temp_median is not None:
             dark_line += f" ({info.temp:.1f} C, {info.temp - sv.temp_median:+.1f} C from the subs)"
+        _calibration_line("dark", d, sv, notes, exposure_and_temp=False)
     elif a.dark_library:
         lib = a.dark_library.expanduser().resolve()
         ordered[("target", "dark")] = "auto"
@@ -587,6 +629,22 @@ def _init(a) -> None:
         ordered[("target", "dark")] = "auto"
         notes.append("no dark given: set [target] dark_library (or dark) in the config before stacking")
         dark_line = "auto, but no dark library set yet"
+    calib_lines = []
+    for kind, path in (("bias", a.bias), ("flats", a.flats)):
+        if path is None:
+            continue
+        p = path.expanduser().resolve()
+        if not p.exists():
+            raise tools.StageError(f"{kind} not found: {p}")
+        ordered[("target", kind)] = str(p)
+        calib_lines.append((kind, _calibration_line(kind, p, sv, notes)))
+    if a.flats is not None and a.flats.expanduser().is_dir() and a.bias is None:
+        notes.append("raw flats but no bias: the master flat will keep the camera's bias level and correct "
+                     "vignetting and dust too weakly; give --bias (a folder of bias frames, or a master bias)")
+    if a.bias is not None and (a.dark is not None or a.dark_library) and not (
+            a.flats is not None and a.flats.expanduser().is_dir()):
+        notes.append("the bias is not used: the lights get the dark subtracted, which contains the bias, "
+                     "and there are no raw flats to calibrate with it")
     ordered.update(explicit)
 
     filt_line = ", ".join(sv.filters) or "not in the header"
@@ -597,12 +655,15 @@ def _init(a) -> None:
             filt_line += f' -> SPCC filter "{spcc}"'
         elif camera:
             notes.append(f"FITS filter {sv.filters[0]!r} is not in the camera preset's filter map; "
-                         "set [color] filter to the Siril SPCC filter name")
+                         "set [color] filter to the Siril SPCC filter name, or, for a dual-band filter "
+                         'that SPCC does not list, [color] narrowband (for H-alpha and OIII: '
+                         '"656.28/12,500.7/12,500.7/12", with your filter\'s bandwidths)')
     elif len(sv.filters) > 1:
         notes.append("the subs were taken through more than one filter: " + ", ".join(sv.filters))
     if sv.focal:
         ordered[("color", "focal")] = round(sv.focal, 1)
-        if abs(sv.focal - base["color"]["focal"]) > 0.02 * base["color"]["focal"] and camera:
+        if (abs(sv.focal - base["color"]["focal"]) > 0.02 * base["color"]["focal"]
+                and base.sources[("color", "focal")].startswith("camera preset")):
             notes.append(f"header focal length {sv.focal:g} mm differs from the camera preset "
                          f"({base['color']['focal']:g} mm); using the header value")
     if sv.pixel:
@@ -644,7 +705,7 @@ def _init(a) -> None:
         ("camera", f"{camera} ({how})" if camera else "no preset"),
         ("look", a.look),
         ("dark", dark_line),
-    ] + ([("mosaic", mosaic_line)] if mosaic_line else [])
+    ] + calib_lines + ([("mosaic", mosaic_line)] if mosaic_line else [])
     head = [f"darkroom.toml for {name or 'a new target'}, written by `darkroom init`.",
             f"Subs: {sv.count} x {exposure}; gain {summary[3][1]}; filter {', '.join(sv.filters) or '?'}; "
             f"sensor {temp()}."] + ([f"Mosaic detected from the pointings in the headers ({sp.describe()})."]
@@ -660,6 +721,21 @@ def _init(a) -> None:
     print(f"next: look over {dest.name} (crop, [starnet] dir), then `darkroom run --work {a.work}`")
 
 
+def _calibration_line(kind: str, path: Path, lights, notes: list, exposure_and_temp: bool = True) -> str:
+    """Summary of calibration frames for `init`; problems go to ``notes``."""
+    from . import calib
+    try:
+        sv = calib.survey_of(path)
+    except tools.StageError as e:
+        notes.append(f"cannot read the {calib.WHAT[kind]}: {e}")
+        return str(path)
+    errors, warnings = calib.check(kind, lights, sv)
+    if not exposure_and_temp:       # a master dark: init has already compared those
+        warnings = [w for w in warnings if not w.startswith("the darks are")]
+    notes += [f"{e} (stacking will stop with this error)" for e in errors] + warnings
+    return calib.describe(path, sv, lights)
+
+
 # ---------------------------------------------------------------- dispatch
 
 def _run(a) -> None:
@@ -672,7 +748,7 @@ def _run(a) -> None:
     table = None
     if "stack" in todo:
         try:
-            table = _stack_table(s)
+            table = _stack_table(s, a.work)
         except tools.StageError as e:
             # e.g. the dark-library or subs drive is unplugged: an existing stack made with the
             # same subs folder and [stack] settings is kept rather than failing the whole run
@@ -681,12 +757,14 @@ def _run(a) -> None:
             same = False
             if old is not None and t["subs"]:
                 now = stages.result_params("stack", {"subs": Path(t["subs"]).expanduser().resolve(),
-                                                     "dark": old.get("dark"), **s["stack"],
+                                                     "dark": old.get("dark"), "bias": old.get("bias"),
+                                                     "flats": old.get("flats"), **s["stack"],
                                                      **({"framing": "max"} if s["stack"]["mosaic"] else {})})
                 same = now == old
             if force_all or not same or not all(p.is_file() for p in stages.outputs(a.work, "stack")):
                 raise
-            print(f"-- stack: kept as it is; its dark cannot be checked ({str(e).splitlines()[0]})", flush=True)
+            print(f"-- stack: kept as it is; its calibration frames cannot be checked ({str(e).splitlines()[0]})",
+                  flush=True)
             todo = todo[1:]
     times, ran_any, starnet_checked = {}, False, False
     use_starnet = stages.starnet_needed(s["finish"])
@@ -736,16 +814,17 @@ def _dispatch(a) -> None:
     stage, table, extra = a.cmd, None, {}
     record = True
     if stage == "stack":
-        table = _stack_table(s)
+        table = _stack_table(s, a.work)
         extra = {"force": a.force, "reuse": a.reuse, "out": a.out}
         record = a.out == "stack"
         if a.reuse:
             old = stages.recorded_params(a.work, "stack")
             new = _params(stage, s, table)
-            if old is None or (old["subs"], old["dark"]) != (new["subs"], new["dark"]):
+            keys = ("subs", "dark", "bias", "flats")
+            if old is None or any(old.get(k) != new.get(k) for k in keys):
                 raise tools.StageError("--reuse-registration needs the frames in <work>/process to come from "
-                                       "the same subs and dark as now, and the record of the last stack run "
-                                       "says otherwise (or is missing)")
+                                       "the same subs and calibration frames as now, and the record of the "
+                                       "last stack run says otherwise (or is missing)")
     elif stage == "finish":
         extra = {"out": a.out}
         record = a.out == stages.FINAL

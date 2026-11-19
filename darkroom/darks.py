@@ -13,7 +13,8 @@ from pathlib import Path
 
 from . import tools
 
-_KEYS = ("OBJECT", "EXPTIME", "CCD-TEMP", "GAIN", "FILTER", "FOCALLEN", "XPIXSZ", "BAYERPAT")
+_KEYS = ("OBJECT", "EXPTIME", "CCD-TEMP", "GAIN", "OFFSET", "FILTER", "FOCALLEN", "XPIXSZ", "BAYERPAT",
+         "NAXIS1", "NAXIS2", "DATE-OBS")
 MAX_SAMPLE = 500            # headers read per survey (evenly spaced over the night)
 WARN_TEMP_DIFF = 5.0        # deg C
 
@@ -56,6 +57,9 @@ class Survey:
     focal: float | None = None
     pixel: float | None = None
     bayer: str | None = None
+    offsets: list[float] = field(default_factory=list)
+    sizes: list[tuple[int, int]] = field(default_factory=list)    # distinct (width, height)
+    dates: list[str] = field(default_factory=list)                # distinct DATE-OBS days, sorted
 
     @property
     def exposure(self) -> float | None:
@@ -64,6 +68,14 @@ class Survey:
     @property
     def gain(self) -> float | None:
         return self.gains[0] if len(self.gains) == 1 else None
+
+    @property
+    def offset(self) -> float | None:
+        return self.offsets[0] if len(self.offsets) == 1 else None
+
+    @property
+    def size(self) -> tuple[int, int] | None:
+        return self.sizes[0] if len(self.sizes) == 1 else None
 
     @property
     def total_seconds(self) -> float | None:
@@ -96,6 +108,10 @@ def survey(files: list[Path]) -> Survey:
     s.focal = _num(heads[0]["FOCALLEN"])
     s.pixel = _num(heads[0]["XPIXSZ"])
     s.bayer = _text(heads[0]["BAYERPAT"])
+    s.offsets = sorted({v for v in (_num(h["OFFSET"]) for h in heads) if v is not None})
+    s.sizes = sorted({(int(h["NAXIS1"]), int(h["NAXIS2"])) for h in heads
+                      if _num(h["NAXIS1"]) is not None and _num(h["NAXIS2"]) is not None})
+    s.dates = sorted({d[:10] for d in (_text(h["DATE-OBS"]) for h in heads) if d})
     return s
 
 
