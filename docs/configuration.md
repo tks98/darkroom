@@ -18,8 +18,10 @@ Unknown keys and bad values are errors that name the file and the key. Relative 
 |---|---|---|
 | `name` | from the FITS `OBJECT` | target name, for your own reference |
 | `subs` | none | folder with the light subs |
-| `dark` | none | `"auto"` to pick from `dark_library`, `"none"`, or the path of a master dark |
+| `dark` | none | `"auto"` to pick from `dark_library`, `"none"`, the path of a master dark, or a folder of raw darks |
 | `dark_library` | none | folder of master darks, used when `dark = "auto"` |
+| `bias` | `"none"` | the path of a master bias, or a folder of raw bias frames (flag `--bias`) |
+| `flats` | `"none"` | the path of a master flat, or a folder of raw flats (flag `--flats`) |
 | `camera` | detected by `init` | camera preset name, or the path of your own `.toml` |
 | `look` | `galaxy` | look preset name, or the path of your own `.toml` |
 
@@ -29,7 +31,10 @@ With `dark = "auto"`, darkroom looks in the dark library for masters with the sa
 
 The Seestar's sensor is not cooled, so this matters more than it would with a cooled camera. During the M31 session the sensor went from 21.4 °C down to 8.6 °C, and the only master dark had been taken at 21.5 °C. See [master dark temperature](troubleshooting.md#the-master-dark-does-not-match-the-subs) for what that did.
 
-## [stack]
+### Bias, flats and folders of raw frames
+
+A folder given as `dark`, `bias` or `flats` is stacked into `<work>/masters/master_dark.fit`, `master_bias.fit` or `master_flat.fit` before the lights are calibrated, and rebuilt only when its frames change. The flats are calibrated with the bias. The lights get the dark and the flat; the bias is subtracted from the lights only when there is no dark. See [calibration frames](usage.md#calibration-frames) for the recipe and the checks against the lights. Work directories made before these settings existed stay up to date: they are recorded only when set.
+
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -87,8 +92,20 @@ If `bge_background.fits` shows the outline of the target, the model has taken re
 | `catalog` | `gaia` | Siril's plate-solve catalogue |
 | `whiteref` | `Average Spiral Galaxy` | SPCC white reference |
 | `catalog_fallback` | true | fetch Gaia DR3 from ESA when Siril's catalogue server is down |
+| `narrowband` | `"none"` | SPCC narrowband mode: wavelength/bandwidth in nm for red, green and blue, e.g. `"656.28/12,500.7/12,500.7/12"`; replaces `filter` |
 
 The camera preset sets `sensor`, `filter`, `focal` and `pixel`, and `init` writes the values from the FITS header. The Seestar's IRCUT filter maps to `UV/IR Block` and its LP filter to `ZWO Seestar LP`.
+
+### Dual-band filters: `narrowband`
+
+SPCC models the filter with a transmission curve from Siril's database. A dual-band filter that is not in it (an "HaO3" filter on an ASIAIR, say) can be described by its bands instead: `narrowband` switches SPCC to its narrowband mode and gives the wavelength and bandwidth of the band each colour channel sees. For hydrogen-alpha and oxygen III on a colour camera, red sees Hα at 656.28 nm and green and blue both see OIII at 500.7 nm:
+
+```toml
+[color]
+narrowband = "656.28/12,500.7/12,500.7/12"
+```
+
+Use your filter's bandwidths if you know them; the result depends little on them. The flag is `--narrowband`, and `"none"` switches it off. When it is set, `filter` is ignored. On the Seestar's LP filter, narrowband mode and the filter curve gave the same colour to within 0.3% (see [history](history.md#colour-through-the-lp-filter)).
 
 ## [denoise]
 
@@ -182,4 +199,4 @@ To make your own, copy a file from `presets/looks/`, change it, and point `look`
 
 ## Cameras
 
-Two camera presets are shipped: `seestar-s30-pro` (160 mm, Sony IMX585) and `seestar-s30` for the original S30 (150 mm, Siril's `ZWO Seestar S30` sensor entry). `init` detects them from the `CREATOR` keyword in the FITS header; a preset whose text equals the header value wins, otherwise the longest matching text, so S30 Pro subs never get the S30 preset. Besides the `[color]` values, each records the Bayer pattern (GRBG), which files count as subs (`Light_*.fit`), how the Seestar names master darks, and the filter-name mapping.
+Three camera presets are shipped: `seestar-s30-pro` (160 mm, Sony IMX585), `seestar-s30` for the original S30 (150 mm, Siril's `ZWO Seestar S30` sensor entry), and `zwo-asi294mc-pro`, a cooled colour camera (Sony IMX294, 4.63 µm pixels, Bayer RGGB). `init` detects the Seestars from the `CREATOR` keyword in the FITS header and the ASI294MC Pro from `INSTRUME`; a preset whose text equals the header value wins, otherwise the longest matching text, so S30 Pro subs never get the S30 preset. Besides the `[color]` values, each records the Bayer pattern, which files count as subs (`Light_*.fit`), how master darks are named for `dark = "auto"`, and the filter-name mapping. The ASI294MC Pro preset has no focal length, since that depends on the telescope: `init` writes the subs' `FOCALLEN`, and without one you set `[color] focal` yourself. It has no filter map either, since filter names are whatever the capture software was told.

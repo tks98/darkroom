@@ -23,9 +23,39 @@ darkroom run  --work m31
   look          galaxy
 ```
 
-Use `--dark FILE` for one particular master dark, or `--no-dark` to stack without one. Use `--look cluster` for a target made of stars and `--look nebula` for an emission nebula (see [Looks](configuration.md#looks)).
+Use `--dark FILE` for one particular master dark, `--dark DIR` for a folder of raw darks, or `--no-dark` to stack without one. With a cooled camera, add `--bias` and `--flats` (see [calibration frames](#calibration-frames)). Use `--look cluster` for a target made of stars and `--look nebula` for an emission nebula (see [Looks](configuration.md#looks)).
 
 The config file lists every setting. The ones `init` did not set are commented out and show the value in effect and where it comes from, so it doubles as a record of how the image was made. Before the first run, set `[starnet] dir` (or `DARKROOM_STARNET_DIR`) and, if you want one, `[finish] crop`.
+
+## Calibration frames
+
+The Seestar keeps its own master darks, and that is all it needs. With a cooled astronomy camera you usually have folders of raw calibration frames instead: darks, bias frames and flats. Give `init` the folders:
+
+```sh
+darkroom init --work ngc2264 --subs path/to/lights --dark path/to/darks --bias path/to/biases --flats path/to/flats
+```
+
+Each of `--dark`, `--bias` and `--flats` (and `[target] dark`, `bias` and `flats` in `darkroom.toml`) takes either a master file or a folder of raw frames. At stack time darkroom stacks each folder into a master in `<work>/masters` with Siril's usual recipe:
+
+| Master | How |
+|---|---|
+| `master_bias.fit` | average of the bias frames, winsorized rejection (3 σ), no normalisation |
+| `master_dark.fit` | the same for the darks; no bias is subtracted, since the lights get the whole dark |
+| `master_flat.fit` | each flat minus the master bias, then averaged with multiplicative normalisation |
+
+The lights are then calibrated with the master dark (or, with no dark, the master bias) and divided by the master flat, and the dark also gives the hot and cold pixels to fix. A master is rebuilt only when frames are added, removed or replaced in its folder, or, for the flat, when the bias changes; otherwise it is reused, and a rebuilt master restacks the lights. If a folder is on a drive that is not connected, the master built from it earlier is used.
+
+Short flats (milliseconds) need no flat darks: the bias stands in for them. Without a bias, raw flats keep the camera's bias level and correct too weakly, and darkroom warns. With a dark and no raw flats, the bias is not used at all.
+
+`init` lists each set with its frame count, exposure, gain, offset, filter, temperature and dates, and checks them against the lights:
+
+- a different frame size or Bayer pattern is an error: the frames cannot come from the same camera and settings;
+- a different gain or offset is a warning, and so is a dark of a different exposure, or more than 5 °C from the lights;
+- flats taken through a different filter than the lights are a warning.
+
+The same checks run again before every stack. Temperature matters for darks only; bias frames and flats are fine at any temperature.
+
+Flats correct vignetting and dust shadows only when they match the optical train of the lights: same filter, same focus, camera not rotated, and no dust moved in between. Ideally, take them right after the session. Look at `masters/master_flat.fit` once (see [look at every stage](#look-at-every-stage)), and at the corners of the stack.
 
 ## Re-running
 
@@ -54,7 +84,8 @@ darkroom stack  --work m31 --reuse-registration --framing cog --out stack_cog
 
 The first time you process a new target, go one stage at a time (`--to stack`, then `--to bge`, and so on) and look at each result before moving on. Most problems are visible right away and are cheaper to fix at the stage that caused them:
 
-- After `stack`, check how many frames were kept (`logs/stack.log`) and that stars are round into the corners.
+- With calibration frames, before or after the first `stack`: open `masters/master_flat.fit` with a strong stretch. It should show the vignetting (darker towards the corners) and perhaps dark rings from dust ("dust donuts"); stars, gradients from a light source, or a flat that is brightest at an edge mean the flats are bad. `logs/masters.log` says how many frames went into each master.
+- After `stack`, check how many frames were kept (`logs/stack.log`) and that stars are round into the corners. With flats, the corners should be about as bright as the middle and dust donuts gone; over-corrected flats leave bright rings and bright corners.
 - After `bge`, the sky should be even, and `bge_background.fits` should be a smooth gradient with no trace of the target.
 - After `color`, read the SPCC lines in `logs/color.log`. Siril says how many stars it used and warns when the fit is imprecise. Through the Seestar's dual-band LP filter the warning is expected: on the Rosette and Orion-belt mosaics it appeared every time, and Siril's narrowband mode gave the same result (see [history](history.md#colour-through-the-lp-filter)).
 - After `starnet`, open `starless.tif` and look for blotches where bright stars were, or for detail that went with the stars.

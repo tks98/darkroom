@@ -51,6 +51,8 @@ anyway, and ask the user to look at them before you move on.
 
 ```sh
 darkroom init --work WORK --subs SUBS --dark-library DARKLIB   # or --dark FILE, or --no-dark
+# a cooled camera with folders (or master files) of calibration frames:
+darkroom init --work WORK --subs SUBS --dark DARKS --bias BIASES --flats FLATS
 # look over WORK/darkroom.toml: [starnet] dir, [finish] crop
 darkroom run --work WORK --to stack        # first time: one stage at a time
 darkroom run --work WORK                   # later: everything that is out of date
@@ -61,6 +63,17 @@ dark (same exposure and gain, nearest temperature) and writes a commented
 `WORK/darkroom.toml` listing every setting and where its value comes from.
 Read its summary: frame count, total integration, sensor temperature range,
 and any warning.
+
+`--dark`, `--bias` and `--flats` each take a master file or a folder of raw
+frames. Folders are stacked into `WORK/masters/master_*.fit` at stack time
+(flats calibrated with the bias) and rebuilt only when their frames change.
+`init` lists each set (count, exposure, gain, offset, filter, temperature,
+dates) and checks it against the lights: a different size or Bayer pattern
+is an error; a different gain, offset, dark exposure, dark temperature
+(> 5 °C), flat filter, or flats taken days from the lights is a warning.
+Report every warning to the user. For a dual-band filter that SPCC does not
+list (FITS filter such as "HaO3"), set `[color] narrowband`, e.g.
+`"656.28/12,500.7/12,500.7/12"` (H-alpha on red, OIII on green and blue).
 
 `run` executes the stages in order and skips any stage whose output is up to
 date, so after changing a setting just run it again; only the affected stages
@@ -82,6 +95,14 @@ Run stage by stage the first time on a new target (`--to STAGE`), and check
 each result. Make a JPG preview, view it, and say what you see. Problems are
 cheap to fix at the stage that caused them and expensive to notice at the end.
 
+### Calibration masters (cooled cameras, first `stack`)
+- Read `logs/masters.log`: every frame of each folder should be stacked.
+- Make a strongly stretched preview of `WORK/masters/master_flat.fit` (it is
+  a raw CFA image: bin 2x2 and divide by its median, then show about 0.85 to
+  1.05). It should be brightest near the middle and fall off smoothly to the
+  corners (vignetting), with perhaps a few dark rings (dust donuts). Stars,
+  a bright edge or a lopsided gradient mean bad flats: report it.
+
 ### After `stack`
 - How many frames were registered and kept? (`logs/stack.log`.) Losing more
   than about 20% deserves a look at why: cloud, wind, trailing.
@@ -98,6 +119,12 @@ cheap to fix at the stage that caused them and expensive to notice at the end.
   against the default for noise and gradient. On M13, dropping the 3 frames with
   the brightest sky and fewest stars (15 down to 12) left the gradient
   unchanged and made the stack 6% noisier.
+- With flats: compare the corners of a quick-stretched stack with its middle.
+  They should be about equally bright, and dust donuts should be gone. If
+  you are unsure, stack once with `--flats none` into a second work dir and
+  compare the corner/centre background (on NGC 2264 the flats lifted the
+  corners from 0.64 to 0.70 of the centre's level). Bright rings or bright
+  corners mean over-correction: flats from another session or filter.
 - Dark temperature: if `init` or `stack` warns that the master dark is more
   than 5 °C from the subs, also make a no-dark stack and compare noise and
   hot pixels before choosing. (On the M31 data the dark was 10.6 °C off; the
