@@ -85,4 +85,4 @@ darkroom finds the external tools through environment variables. Defaults are th
 pytest
 ```
 
-The tests use synthetic arrays and fakes. They need no image data, no external tools and no network.
+The tests use synthetic arrays and fakes. They need no image data, no external tools and no network. GitHub runs them on every pull request and every push to `main`, on Linux with Python 3.11 and 3.13 and on macOS with Python 3.12 (`.github/workflows/tests.yml`).
