@@ -168,9 +168,14 @@ cheap to fix at the stage that caused them and expensive to notice at the end.
   whether Siril warned that the fit was imprecise. Report the warning; do not
   hide it. Through the Seestar's dual-band LP filter it is expected; Siril's
   narrowband mode did not change the result.
-- If the stage stops because Siril "could not download the star spectra",
-  Siril's SPCC server is down or rate-limiting (HTTP 429). Wait and rerun the
-  stage; do not skip colour calibration.
+- `color` keeps a local copy of SPCC's star spectra (`[color] spcc_local`,
+  on by default) and fetches what a new field needs before running Siril; its
+  output says how much it fetched, or that the copy already covered the field.
+  If it stops because Siril "could not download the star spectra", darkroom's
+  own fetch failed on every server as well: Siril's SPCC servers are down or
+  rate-limiting (HTTP 429). Wait and rerun the stage; do not skip colour
+  calibration. `darkroom catalog fetch --work DIR` fetches a field ahead of
+  time, for working offline.
 - The plate-solve result (pixel scale, field centre) should match the camera.
 
 ### After `denoise`

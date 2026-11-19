@@ -80,6 +80,18 @@ darkroom stack  --work m31 --reuse-registration --framing cog --out stack_cog
 
 `darkroom <command> --help` lists every flag. `examples/m31.sh` is the whole M31 run written out as single commands.
 
+## Working offline
+
+Colour calibration needs star spectra that darkroom downloads for each new part of the sky (see [`spcc_local`](configuration.md#spccs-star-spectra-spcc_local)), and plate solving needs a star list from VizieR or ESA's archive. To process a target somewhere without internet access, run its stages up to `color` once while online, or fetch the spectra ahead of time:
+
+```sh
+darkroom catalog fetch --work m31                          # the field of m31's image
+darkroom catalog fetch --ra 83.82 --dec -5.39 --radius 2   # any field, in degrees
+darkroom catalog status --work m31                         # what is stored; whether it covers m31
+```
+
+`catalog fetch --work` uses the field of `spcc.fit` when it exists (plate-solved), else the pointing in the header of `bge.fits` or `stack.fit`, with a margin. `darkroom doctor --work DIR` also says whether the copy covers the field. Plate solving reads Siril's download cache, so a target that was solved before solves again offline.
+
 ## Look at every stage
 
 The first time you process a new target, go one stage at a time (`--to stack`, then `--to bge`, and so on) and look at each result before moving on. Most problems are visible right away and are cheaper to fix at the stage that caused them:

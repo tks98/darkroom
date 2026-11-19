@@ -4,12 +4,16 @@
 # Rendered by `darkroom color`.
 ############################################
 requires 1.4.0
+# [color] spcc_local: SPCC reads its star spectra from darkroom's local copy of the
+# Gaia XP catalogue. darkroom runs this script on a throwaway copy of Siril's
+# settings (siril-cli -i), so this setting never reaches the user's own config.
+{{if SPCC_CATALOGUE}}set "core.catalogue_gaia_photo={{SPCC_CATALOGUE=}}"
 setext fit
 cd "{{WORK}}"
 load bge.fits
 platesolve -focal={{FOCAL}} -pixelsize={{PIXEL}} -catalog={{CATALOG}}
 # [color] narrowband: SPCC's narrowband mode (filter wavelengths and bandwidths)
 # instead of a filter curve from Siril's database
-{{ifnot NARROWBAND}}spcc "-oscsensor={{SENSOR}}" "-oscfilter={{FILTER}}" "-whiteref={{WHITEREF=Average Spiral Galaxy}}"
-{{if NARROWBAND}}spcc "-oscsensor={{SENSOR}}" -narrowband {{NARROWBAND=}} "-whiteref={{WHITEREF=Average Spiral Galaxy}}"
+{{ifnot NARROWBAND}}spcc "-oscsensor={{SENSOR}}" "-oscfilter={{FILTER}}" "-whiteref={{WHITEREF=Average Spiral Galaxy}}"{{SPCC_SOURCE=}}
+{{if NARROWBAND}}spcc "-oscsensor={{SENSOR}}" -narrowband {{NARROWBAND=}} "-whiteref={{WHITEREF=Average Spiral Galaxy}}"{{SPCC_SOURCE=}}
 save spcc

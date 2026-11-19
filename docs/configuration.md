@@ -93,6 +93,7 @@ If `bge_background.fits` shows the outline of the target, the model has taken re
 | `whiteref` | `Average Spiral Galaxy` | SPCC white reference |
 | `catalog_fallback` | true | fetch Gaia DR3 from ESA when Siril's catalogue server is down |
 | `narrowband` | `"none"` | SPCC narrowband mode: wavelength/bandwidth in nm for red, green and blue, e.g. `"656.28/12,500.7/12,500.7/12"`; replaces `filter` |
+| `spcc_local` | true | keep a local copy of the star spectra SPCC needs for the field (fetched once) and run SPCC on it, instead of letting Siril download them each time |
 
 The camera preset sets `sensor`, `filter`, `focal` and `pixel`, and `init` writes the values from the FITS header. The Seestar's IRCUT filter maps to `UV/IR Block` and its LP filter to `ZWO Seestar LP`.
 
@@ -106,6 +107,14 @@ narrowband = "656.28/12,500.7/12,500.7/12"
 ```
 
 Use your filter's bandwidths if you know them; the result depends little on them. The flag is `--narrowband`, and `"none"` switches it off. When it is set, `filter` is ignored. On the Seestar's LP filter, narrowband mode and the filter curve gave the same colour to within 0.3% (see [history](history.md#colour-through-the-lp-filter)).
+
+### SPCC's star spectra: `spcc_local`
+
+SPCC needs the Gaia DR3 spectra of the stars in the field. Siril downloads them from its own servers on every run, Zenodo first, and Siril 1.4.5 crashes when that server answers with an error (see [troubleshooting](troubleshooting.md#colour-calibration-stops-with-siril-could-not-download-the-star-spectra)). With `spcc_local = true`, the default, the `color` stage first makes sure darkroom's local copy covers the field, fetching what is missing from the same servers (with retries, and the next server when one fails), and then runs SPCC on that copy, offline. A field is fetched once; later runs, and other targets in the same part of the sky, use what is there. A Seestar field takes about 15 MB.
+
+The copy is in `<cache>/gaia-xpsampled` (`~/Library/Caches/darkroom` on a Mac, `~/.cache/darkroom` on Linux, `$DARKROOM_CACHE` when that is set). It holds Siril's catalogue files, `siril_cat1_healpix8_xpsamp_<n>.dat`, with only the parts of the sky darkroom has fetched; `coverage.json` lists them. Deleting the folder is safe: it is fetched again when needed. darkroom points Siril at it for the run only, through a throwaway copy of Siril's settings, so your own Siril settings do not change.
+
+If the fetch fails on every server, Siril downloads the spectra itself, as it does with `spcc_local = false` (flag `--no-spcc-local`). The colour is the same either way: on M31 both gave the same factors and the same `spcc.fit`, pixel for pixel.
 
 ## [denoise]
 

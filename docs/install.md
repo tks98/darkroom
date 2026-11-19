@@ -58,7 +58,7 @@ On Apple Silicon this installs StarNet2 2.6, which is signed and runs natively: 
 darkroom doctor --work path/to/work --subs path/to/lights
 ```
 
-`doctor` checks everything a run depends on and prints a fix for anything that is wrong. It looks at Python and its packages, the Siril and GraXpert versions, the denoise model, and whether the model really runs on the GPU (it times one batch on the GPU and one on the CPU). It checks that StarNet is there and whether macOS Gatekeeper is blocking it, whether Siril's catalogue server and ESA's Gaia archive answer, and, with `--work` and `--subs`, whether there is enough free disk for the stack.
+`doctor` checks everything a run depends on and prints a fix for anything that is wrong. It looks at Python and its packages, the Siril and GraXpert versions, the denoise model, and whether the model really runs on the GPU (it times one batch on the GPU and one on the CPU). It checks that StarNet is there and whether macOS Gatekeeper is blocking it, whether Siril's catalogue server and ESA's Gaia archive answer, and, with `--work` and `--subs`, whether there is enough free disk for the stack. With `--work` it also says whether darkroom's local copy of SPCC's star spectra covers that target's field, so colour calibration can run offline.
 
 A run on this machine takes about 12 seconds. A `WARN` is information; only a `FAIL` needs fixing before you process anything. `doctor` reports and changes nothing, with one exception: the first time, it builds the GPU copy of the denoise model in the cache directory.
 

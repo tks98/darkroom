@@ -129,9 +129,8 @@ def siril_cache_dir() -> Path:
     override = os.environ.get("DARKROOM_SIRIL_CACHE")
     if override:
         return Path(override).expanduser()
-    if tools.is_macos():
-        return Path("~/Library/Application Support/org.siril.Siril/siril/download_cache").expanduser()
-    return Path(tools._xdg("XDG_CONFIG_HOME", "~/.config")).expanduser() / "siril" / "download_cache"
+    from . import siril
+    return siril.config_dir() / "download_cache"
 
 
 def cache_name(ra: float, dec: float, radius_arcmin: float, mag: float) -> str:

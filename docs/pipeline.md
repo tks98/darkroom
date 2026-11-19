@@ -37,6 +37,8 @@ For M31 the solve gave 3.68 arcseconds per pixel, and SPCC used 1,891 stars. Sir
 
 Siril downloads its star lists from VizieR. When VizieR is unreachable, this stage fetches the list from ESA's Gaia archive instead and retries. See [the catalogue server](troubleshooting.md#plate-solving-fails-because-the-catalogue-server-is-down).
 
+SPCC's star spectra come from a local copy that this stage fetches once per part of the sky, from the same servers Siril uses, and Siril reads it offline. For M31 that was 597 sky pixels and about 15 MB. See [`spcc_local`](configuration.md#spccs-star-spectra-spcc_local).
+
 ## denoise
 
 This runs GraXpert's AI denoise model (version 3.0.2) on the linear image, through onnxruntime on the Apple GPU. GraXpert's own GPU path fails on macOS 27 ([details](troubleshooting.md#graxperts-gpu-denoise-fails-on-macos)), so darkroom reimplements GraXpert's tiling and blending around the same model.

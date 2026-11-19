@@ -18,12 +18,16 @@ If both servers are down, wait. Colour calibration is worth more than the time i
 
 ## Colour calibration stops with "Siril could not download the star spectra"
 
-SPCC compares the stars in the image with Gaia DR3 spectra, which Siril downloads from its own servers, Zenodo first. When Zenodo answers with an error, Siril 1.4.5 logs "Query failed on mirror ..., trying alternatives..." and then crashes instead of trying the next server, so macOS may also show a crash report for `siril-cli`. The `color` stage recognises this and says which error the server gave:
+SPCC compares the stars in the image with Gaia DR3 spectra, which Siril downloads from its own servers, Zenodo first. When Zenodo answers with an error, Siril 1.4.5 logs "Query failed on mirror ..., trying alternatives..." and then crashes instead of trying the next server, so macOS may also show a crash report for `siril-cli`. It crashes the same way when it cannot connect at all.
+
+darkroom avoids this by keeping its own copy of the spectra for the fields it processes ([`spcc_local`](configuration.md#spccs-star-spectra-spcc_local)): it fetches them itself, retrying and moving on to the next server when one fails, and runs SPCC on the copy. So this error now only appears when darkroom's fetch failed on every server too (its output then says "could not download the SPCC star spectra" and lists each server's error), or with `spcc_local = false`. Once a field has been fetched, its colour calibration needs no network. To fetch a field ahead of time, while online, run `darkroom catalog fetch --work DIR`; `darkroom doctor --work DIR` says whether the copy covers the field.
+
+When Siril does download the spectra itself, the `color` stage recognises the crash and says which error the server gave:
 
 - HTTP 500, 502 or 504: Zenodo is having problems. On 2026-11-18 it returned these for several hours.
 - HTTP 429: Zenodo is rate-limiting your machine, usually after several colour calibrations in a row. Wait a few minutes.
 
-Nothing is wrong with the image. Run the stage again later. darkroom does not skip colour calibration, and the catalogue fallback for plate solving does not cover this, because the spectra are not available from the ESA archive in the form Siril reads. Siril's local Gaia catalogue for SPCC avoids the download entirely, at the cost of a large one-off install; see Siril's documentation.
+Nothing is wrong with the image. Run the stage again later. darkroom does not skip colour calibration, and the catalogue fallback for plate solving does not cover this, because the spectra are not available from the ESA archive in the form Siril reads.
 
 ## The master dark does not match the subs
 
