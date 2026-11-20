@@ -13,7 +13,7 @@ bash setup.sh                # add --starnet-dir DIR if you already have StarNet
 source .venv/bin/activate    # puts `darkroom` on the PATH
 ```
 
-`setup.sh` creates `.venv`, installs the package into it, builds a copy of the GraXpert denoise model that runs on the Apple GPU (see [why](troubleshooting.md#graxperts-gpu-denoise-fails-on-macos)), links the agent skill into `~/.claude/skills/darkroom` (`--skill-dir DIR` for another agent, `--no-skill` to skip; see [using darkroom with an AI agent](agents.md)), and runs `darkroom setup`, described next. You can run it again at any time; it only redoes what is missing.
+`setup.sh` creates `.venv`, installs the package into it, builds a copy of the GraXpert denoise model that runs on the Apple GPU (see [why](troubleshooting.md#graxperts-gpu-denoise-fails-on-macos)), links the agent skill into `~/.claude/skills/darkroom` (`--skill-dir DIR` for another agent, `--no-skill` to skip; see [using darkroom with an AI agent](agents.md)), and runs `darkroom setup`, described next. You can run it again at any time; it only redoes what is missing. If the skill link already points to another darkroom checkout, `setup.sh` says so and leaves it; `--replace-skill` points it at this one.
 
 ## `darkroom setup`
 
@@ -36,6 +36,8 @@ A file downloaded by a program rather than a browser is not marked as downloaded
 
 Siril's Mac build is signed and notarized by Apple, so Gatekeeper accepts it and it just works. GraXpert's Mac build is not notarized. Before installing it, `setup` tells you so and asks you to type `yes` (or pass `--allow-unnotarized`). After that, macOS blocks it until you allow it yourself: run it once, then open System Settings, Privacy & Security, and click Open Anyway. darkroom never lifts that block for you, and `doctor` reports it until you do.
 
+`darkroom get-starnet` does the same for StarNet2: it marks the package as downloaded and asks Gatekeeper about it. If Gatekeeper does not accept it, it tells you, and neither `doctor` nor the `starnet` stage runs it until you allow it. If darkroom cannot read a program's quarantine flag at all, it does not run that program either, and says why. A StarNet2 installed by an earlier darkroom, which did not mark it, is run only if Gatekeeper accepts it as it is; otherwise `doctor` asks you to reinstall it with `darkroom get-starnet --force`.
+
 ### Where darkroom finds the tools
 
 For Siril and GraXpert: the environment variable (`DARKROOM_SIRIL`, `DARKROOM_GRAXPERT`) if set, then a copy installed by `darkroom setup`, then the standard location (`/Applications` on a Mac).
@@ -46,7 +48,9 @@ For Siril and GraXpert: the environment variable (`DARKROOM_SIRIL`, `DARKROOM_GR
 darkroom get-starnet
 ```
 
-This finds the current StarNet2 command-line build for your platform on the official StarNet site, downloads it, prints its full licence and asks you to type `accept`. Only then does it install it, in darkroom's cache, with an `accepted.json` recording the version, the download address and when you accepted. If you do not accept, it deletes the download and installs nothing. `--dry-run` shows what it would download, `--list` shows what is installed, and `--zip FILE` installs a zip you downloaded from the StarNet site yourself.
+This finds the current StarNet2 command-line build for your platform on the official StarNet site, downloads it, prints its full licence and asks you to type `accept`. Only then does it unpack and install it, in darkroom's cache, with an `accepted.json` recording the version, the download address, the zip's SHA-256 and when you accepted. If you do not accept, it deletes the download and installs nothing. `--dry-run` shows what it would download, `--list` shows what is installed, and `--zip FILE` installs a zip you downloaded from the StarNet site yourself.
+
+The 2.6.2 builds for macOS (Apple Silicon and Intel) and Linux are checked against a size and SHA-256 pinned in darkroom. If the site offers a newer build, darkroom has no pinned hash for it: `get-starnet` then prints the file's name, size and SHA-256 with a warning, checks it against the SHA-256 the StarNet site shows next to the link when there is one, and continues only if you type `yes` (or pass `--allow-unpinned`). Without a terminal and without that flag it stops and installs nothing. Accepting the licence is a separate step either way.
 
 StarNet2's licence lets you use it free of charge for astrophotography processing. It does not allow redistributing it or using its output to train or test other software. Read it in full when `get-starnet` shows it.
 
@@ -58,11 +62,11 @@ On Apple Silicon this installs StarNet2 2.6, which is signed and runs natively: 
 darkroom doctor --work path/to/work --subs path/to/lights
 ```
 
-`doctor` checks everything a run depends on and prints a fix for anything that is wrong. It looks at Python and its packages, the Siril and GraXpert versions, the denoise model, and whether the model really runs on the GPU (it times one batch on the GPU and one on the CPU). It checks that StarNet is there and whether macOS Gatekeeper is blocking it, whether Siril's catalogue server and ESA's Gaia archive answer, and, with `--work` and `--subs`, whether there is enough free disk for the stack. With `--work` it also says whether darkroom's local copy of SPCC's star spectra covers that target's field, so colour calibration can run offline.
+`doctor` checks everything a run depends on and prints a fix for anything that is wrong. It looks at Python and its packages, the Siril and GraXpert versions, the denoise model (whose size and SHA-256 must match GraXpert's model 3.0.2), and whether the model really runs on the GPU (it times one batch on the GPU and one on the CPU). It checks that StarNet is there and whether macOS Gatekeeper is blocking it, whether Siril's catalogue server and ESA's Gaia archive answer, and, with `--work` and `--subs`, whether there is enough free disk for the stack. With `--work` it also says whether darkroom's local copy of SPCC's star spectra covers that target's field, so colour calibration can run offline.
 
 A run on this machine takes about 12 seconds. A `WARN` is information; only a `FAIL` needs fixing before you process anything. `doctor` reports and changes nothing, with one exception: the first time, it builds the GPU copy of the denoise model in the cache directory.
 
-Useful flags: `--run-starnet` also runs the old StarNet v2.0.2 on its bundled sample (StarNet2 is checked without running an image), `--offline` skips the network checks, and `--json` prints the results for scripts.
+Useful flags: `--run-starnet` also runs the old StarNet v2.0.2 on its bundled sample (StarNet2 is checked without running an image), `--offline` skips the network checks, and `--json` prints the results for scripts. Paths in your home folder are shown as `~/...`, in the table and in the JSON, so you can paste a report without your user name in it.
 
 ## Where darkroom looks for things
 

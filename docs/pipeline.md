@@ -1,10 +1,10 @@
 # How it works
 
-darkroom runs seven stages, plus an optional deconvolution stage that is off by default. Each reads the previous stage's file from the work directory and writes its own, so any stage can be redone without the ones before it. Logs from the external tools go to `<work>/logs/`.
+darkroom runs seven stages, plus an optional deconvolution stage that is off by default. Each reads the previous stage's file from the work directory and writes its own, so any stage can be redone without the ones before it. Logs from the external tools go to `<work>/logs/`. Siril always runs on a throwaway copy of its settings, so darkroom's scripts never change your Siril preferences.
 
 | Stage | Tool | Reads | Writes |
 |---|---|---|---|
-| `stack` | Siril | subs, master dark | `stack.fit` |
+| `stack` | Siril | subs, calibration masters | `stack.fit` |
 | `bge` | GraXpert | `stack.fit` | `bge.fits`, `bge_background.fits` |
 | `color` | Siril | `bge.fits` | `spcc.fit` |
 | `denoise` | GraXpert's model, run with onnxruntime | `spcc.fit` | `denoised.fits` |
@@ -17,7 +17,7 @@ The numbers below come from the M31 run: 404 subs of 30 seconds from a Seestar S
 
 ## stack
 
-Siril subtracts the master dark, fixes hot and cold pixels found in the dark, and converts the colour-filter data to RGB. It then registers the frames in two passes (the first picks the best reference frame), keeps the best 90% by star sharpness and the best 90% by star roundness, and stacks with winsorized sigma rejection, weighting each frame by its sharpness.
+darkroom links the selected subs (the FITS files that match the camera's `sub_glob`) into `<work>/process/subs`, and Siril works from there, so it stacks exactly those files and never writes into the subs folder. Siril subtracts the master dark, fixes hot and cold pixels found in the dark, and converts the colour-filter data to RGB. It then registers the frames in two passes (the first picks the best reference frame), keeps the best 90% by star sharpness and the best 90% by star roundness, and stacks with winsorized sigma rejection, weighting each frame by its sharpness.
 
 For M31, 2 frames failed registration and 346 of 404 were kept, 2 h 53 min in all. The stack took about 3 minutes. The calibrated and registered frames in `process/` took 31 GB.
 

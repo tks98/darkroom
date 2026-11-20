@@ -14,7 +14,7 @@ cd darkroom
 docker build --platform linux/amd64 -t darkroom .
 ```
 
-The build downloads Siril and GraXpert from their official release pages and checks each file against a SHA-256 hash pinned in the `Dockerfile`. The image is about 2.6 GB, most of it GraXpert.
+The build downloads Siril and GraXpert from their official release pages and checks each file against a SHA-256 hash pinned in the `Dockerfile`. The Debian base image is pinned by its digest too. The image is about 2.6 GB, most of it GraXpert.
 
 ## Run it
 
@@ -32,7 +32,7 @@ docker/darkroom-docker --subs ~/astro/M31_sub --darks ~/astro/darklibrary --work
 
 For bias frames and flats, put the calibration folders under one folder and mount that as `--darks`; then use, for example, `--dark /darks/darks --bias /darks/biases --flats /darks/flats`. Read-only folders are fine: darkroom stacks them from links in the work directory.
 
-Everything after `--` is passed to `darkroom`. Results land in the work folder on your machine as usual. On Linux the wrapper runs the container as your user, so the files are yours.
+Everything after `--` is passed to `darkroom`. Results land in the work folder on your machine as usual. The container never runs as root: the image's default user is an unprivileged one (uid 1000), and the wrapper runs it as your own user and group (`--user`), so on Linux the files in the work folder are yours. The wrapper stops with a message if `--work`, `--subs`, `--darks` or `--image` has no value, or if the `--subs` or `--darks` folder does not exist.
 
 `docker/darkroom-docker --work ~/astro/m31 -- doctor` checks the setup inside the container.
 
@@ -47,11 +47,13 @@ docker run --rm -it --platform linux/amd64 `
   darkroom run --work /work
 ```
 
+Called like this, without `--user`, the container runs as the image's user, uid 1000. That is fine with Docker Desktop, which maps the ownership of mounted folders by itself; on Linux, pass `--user "$(id -u):$(id -g)"` as the wrapper does, or the container may not be allowed to write to your work folder.
+
 Windows support has not been tested yet.
 
 ## StarNet
 
-`darkroom get-starnet` finds the current StarNet2 command-line build for Linux on the official StarNet site, downloads it, prints its full licence, and asks you to type `accept`. Only then does it install it, into the cache volume. It records the version, the download address and when you accepted in an `accepted.json` file next to it. If you do not accept, it deletes the download and installs nothing.
+`darkroom get-starnet` finds the current StarNet2 command-line build for Linux on the official StarNet site, downloads it, prints its full licence, and asks you to type `accept`. Only then does it unpack and install it, into the cache volume. The 2.6.2 build is checked against a pinned size and SHA-256; for a newer build darkroom has no pinned hash, so it shows you the file's size and SHA-256 and asks you to type `yes` first (or pass `--allow-unpinned`). It records the version, the download address and when you accepted in an `accepted.json` file next to it. If you do not accept, it deletes the download and installs nothing.
 
 StarNet2's licence lets you use it free of charge for astrophotography processing. It does not allow redistributing it or using its output to train or test other software. Read it in full when `get-starnet` shows it.
 
@@ -63,6 +65,12 @@ The image sets its home directory to `/cache`, which the wrapper mounts as the D
 
 ```sh
 docker volume rm darkroom-cache
+```
+
+`/cache` and `/work` in the image are writable by every user (with the sticky bit, like `/tmp`), so the volume works whatever uid the container runs as. A volume used with an image from before November 2026, which ran as root, holds files owned by root that your user cannot change. The image then stops with a message that says so. Either remove the volume as above (GraXpert's models and StarNet are then downloaded again), or hand its files to your user once:
+
+```sh
+docker run --rm --user 0 -v darkroom-cache:/cache --entrypoint chown darkroom -R "$(id -u):$(id -g)" /cache
 ```
 
 ## Speed

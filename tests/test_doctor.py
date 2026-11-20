@@ -2,6 +2,7 @@
 import argparse
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -60,8 +61,27 @@ def test_graxpert_ok_and_timeout(tmp_path):
 
     def slow(cmd, timeout=15, cwd=None):
         raise subprocess.TimeoutExpired(cmd, timeout)
-    assert doctor.check_graxpert(exe, run=slow).status == WARN
+    assert doctor.check_graxpert(exe, run=slow, system="linux").status == WARN
     assert doctor.check_graxpert(tmp_path / "nope").status == FAIL
+
+
+@pytest.mark.parametrize("probe", [
+    lambda cmd, timeout=15, cwd=None: (_ for _ in ()).throw(subprocess.TimeoutExpired(cmd, timeout)),
+    lambda cmd, timeout=15, cwd=None: (_ for _ in ()).throw(FileNotFoundError("xattr")),
+    lambda cmd, timeout=15, cwd=None: (1, "xattr: [Errno 1] Operation not permitted"),
+])
+def test_unreadable_quarantine_flag_is_not_executed(tmp_path, probe):
+    exe = fake_exe(tmp_path / "GraXpert")
+    ran = []
+
+    def run(cmd, timeout=15, cwd=None):
+        if cmd[0] == "xattr":
+            return probe(cmd, timeout)
+        ran.append(cmd)
+        return 0, "GraXpert version: 3.1.0"
+    r = doctor.check_graxpert(exe, run=run, system="darwin")
+    assert r.status == FAIL and "could not read its quarantine flag" in r.detail and "did not execute" in r.detail
+    assert ran == [] and "xattr -p com.apple.quarantine" in r.fix
 
 
 def test_graxpert_falls_back_to_long_flag(tmp_path):
@@ -96,12 +116,34 @@ def test_pinned_onnxruntime_matches_pyproject():
     assert f'"onnxruntime=={doctor.pinned_onnxruntime()}"' in text
 
 
-def test_model_missing(tmp_path):
+def pin_denoise_model(monkeypatch, data: bytes):
+    """Make stand-in bytes the 'pinned' denoise model (the real one is GraXpert's, never in tests)."""
+    import hashlib
+    from darkroom import models
+    monkeypatch.setattr(models, "DENOISE_BYTES", len(data))
+    monkeypatch.setattr(models, "DENOISE_SHA256", hashlib.sha256(data).hexdigest())
+
+
+def test_model_missing(tmp_path, monkeypatch):
     r = doctor.check_model(tmp_path / "model.onnx")
     assert r.status == FAIL and "DARKROOM_GRAXPERT_MODEL" in r.fix
     (tmp_path / "model.onnx").write_bytes(b"x")
-    assert doctor.check_model(tmp_path / "model.onnx").status == OK
+    r = doctor.check_model(tmp_path / "model.onnx")
+    assert r.status == FAIL and "not the 477703971 of denoise model 3.0.2" in r.detail and "delete it" in r.fix
+    pin_denoise_model(monkeypatch, b"x")
+    r = doctor.check_model(tmp_path / "model.onnx")
+    assert r.status == OK and "size and SHA-256 match" in r.detail
     assert doctor.check_gpu(tmp_path / "absent.onnx").status == FAIL      # no onnxruntime work without a model
+
+
+def test_model_with_the_right_size_but_wrong_hash(tmp_path, monkeypatch):
+    p = tmp_path / "model.onnx"
+    p.write_bytes(b"y")
+    pin_denoise_model(monkeypatch, b"x")
+    r = doctor.check_model(p)
+    assert r.status == FAIL and "not its SHA-256" in r.detail
+    r = doctor.check_gpu(p, ort=pytest.fail)            # the GPU check does not use a wrong model either
+    assert r.status == FAIL and "not its SHA-256" in r.detail
 
 
 # ---- starnet
@@ -118,8 +160,10 @@ def starnet_folder(tmp_path) -> Path:
 class FakeSystem:
     """Stands in for file / arch / xattr / starnet++."""
 
-    def __init__(self, quarantined=(), arch="Mach-O 64-bit executable x86_64", rosetta_rc=0, starnet_rc=0):
+    def __init__(self, quarantined=(), arch="Mach-O 64-bit executable x86_64", rosetta_rc=0, starnet_rc=0,
+                 notarized=(), flag="0083;0;x;"):
         self.quarantined, self.arch, self.rosetta_rc, self.starnet_rc = set(quarantined), arch, rosetta_rc, starnet_rc
+        self.notarized, self.flag = set(notarized), flag
         self.calls = []
 
     def __call__(self, cmd, timeout=15, cwd=None):
@@ -130,7 +174,12 @@ class FakeSystem:
             return self.rosetta_rc, ""
         if cmd[0] == "xattr":
             assert cmd[1] == "-p", "doctor must only read attributes"
-            return (0, "0083;0;x;") if Path(cmd[-1]).name in self.quarantined else (1, "No such xattr")
+            return (0, self.flag) if Path(cmd[-1]).name in self.quarantined else (1, "No such xattr")
+        if cmd[0] == "spctl":
+            assert cmd[:6] == ["spctl", "-a", "-t", "open", "--context", "context:primary-signature"]
+            if Path(cmd[-1]).name in self.notarized:
+                return 0, f"{cmd[-1]}: accepted\nsource=Notarized Developer ID\n"
+            return 3, f"{cmd[-1]}: rejected\n"
         if cmd[0] == "./starnet++":
             assert Path(cwd).name == "StarNet" and cmd[1] == "rgb_test.tif"
             if self.starnet_rc == 0:
@@ -162,6 +211,84 @@ def test_quarantine_fails_and_never_executes(tmp_path, flagged):
     assert "xattr -dr com.apple.quarantine" in r.fix and "your decision" in r.fix
     assert not sysm.executed_starnet
     assert not any(c[0] == "xattr" and c[1] != "-p" for c in sysm.calls)
+
+
+def test_quarantined_starnet_runs_when_gatekeeper_accepts_or_the_user_allowed_it(tmp_path):
+    d = starnet_folder(tmp_path)
+    sysm = FakeSystem(quarantined=["starnet++", "libtensorflow.2.dylib"],
+                      notarized=["starnet++", "libtensorflow.2.dylib"])
+    r = doctor.check_starnet(str(d), run_sample=True, run=sysm, env={}, system="darwin")
+    assert r.status == OK and sysm.executed_starnet and "accepted by Gatekeeper: Notarized Developer ID" in r.detail
+    sysm = FakeSystem(quarantined=["starnet++"], flag="01c3;6a000000;Safari;UUID")       # Open Anyway
+    r = doctor.check_starnet(str(d), run_sample=True, run=sysm, env={}, system="darwin")
+    assert r.status == OK and sysm.executed_starnet and "allowed by you" in r.detail
+    assert not any(c[0] == "spctl" for c in sysm.calls)
+
+
+def test_starnet_with_unreadable_quarantine_flag_is_not_run(tmp_path):
+    d = starnet_folder(tmp_path)
+
+    def run(cmd, timeout=15, cwd=None):
+        if cmd[0] == "xattr":
+            raise subprocess.TimeoutExpired(cmd, timeout)
+        return FakeSystem()(cmd, timeout, cwd)
+    r = doctor.check_starnet(str(d), run_sample=True, run=run, env={}, system="darwin")
+    assert r.status == FAIL and "could not read the quarantine flag" in r.detail and "did not answer" in r.detail
+    assert "doctor did not execute it" in r.detail and "xattr -p com.apple.quarantine" in r.fix
+
+
+def starnet2_install(tmp_path, accepted: dict) -> Path:
+    d = tmp_path / "starnet2_macos-arm64_2.6.2-0242_COREML_arm64_cli"
+    fake_exe(d / "starnet2")
+    (d / "StarNet2_weights.mlpackage").mkdir()
+    (d / "accepted.json").write_text(json.dumps({"product": "StarNet2", "version": "2.6.2", **accepted}))
+    return d
+
+
+class Mac2(FakeSystem):
+    def __call__(self, cmd, timeout=15, cwd=None):
+        if cmd[0] == "./starnet2":
+            self.calls.append(cmd)
+            return 0, '{"product":"starnet2","version":"2.6.2","build":"0242","backend":"coreml"}'
+        return super().__call__(cmd, timeout, cwd)
+
+
+@pytest.mark.parametrize("notarized", [False, True])
+def test_starnet2_from_an_older_get_starnet_is_assessed_before_it_runs(tmp_path, notarized):
+    """Installed without a quarantine flag, so macOS never judged it: doctor asks spctl first."""
+    d = starnet2_install(tmp_path, {})
+    sysm = Mac2(arch="Mach-O 64-bit executable arm64", notarized=["starnet2"] if notarized else [])
+    r = doctor.check_starnet(str(d), run=sysm, env={}, system="darwin")
+    ran = any(c[0] == "./starnet2" for c in sysm.calls)
+    if notarized:
+        assert r.status == OK and ran and "accepted by Gatekeeper" in r.detail
+    else:
+        assert r.status == FAIL and not ran and "never assessed it" in r.detail
+        assert "darkroom get-starnet --force" in r.fix and "doctor did not execute it" in r.detail
+    assert not any(c[0] == "xattr" and c[1] != "-p" for c in sysm.calls)
+
+
+def test_starnet2_quarantined_by_get_starnet(tmp_path):
+    d = starnet2_install(tmp_path, {"quarantine": "0081;6a000000;darkroom;"})
+    sysm = Mac2(arch="Mach-O 64-bit executable arm64", quarantined=["starnet2"], flag="0081;6a000000;darkroom;")
+    r = doctor.check_starnet(str(d), run=sysm, env={}, system="darwin")
+    assert r.status == FAIL and "not notarized" in r.detail and not any(c[0] == "./starnet2" for c in sysm.calls)
+    assert f"xattr -dr com.apple.quarantine '{d}'" in r.fix
+    sysm = Mac2(arch="Mach-O 64-bit executable arm64")             # the user cleared the flag: their decision
+    assert doctor.check_starnet(str(d), run=sysm, env={}, system="darwin").status == OK
+    assert not any(c[0] == "spctl" for c in sysm.calls)
+
+
+def test_starnet_stage_refuses_a_blocked_starnet(tmp_path, monkeypatch):
+    from darkroom import starnet as sn, toolset
+    d = starnet2_install(tmp_path, {"quarantine": "0081;6a000000;darkroom;"})
+    sysm = Mac2(arch="Mach-O 64-bit executable arm64", quarantined=["starnet2"], flag="0081;6a000000;darkroom;")
+    monkeypatch.setattr(toolset, "_run", sysm)
+    monkeypatch.setattr(sys, "platform", "darwin")
+    with pytest.raises(doctor.tools.StageError, match="darkroom did not execute it. Allowing it is your decision"):
+        sn.require_runnable(sn.detect(d))
+    monkeypatch.setattr(sys, "platform", "linux")
+    sn.require_runnable(sn.detect(d))
 
 
 def test_starnet_not_run_by_default(tmp_path):
@@ -219,6 +346,39 @@ def test_catalogue_reachability(up, status):
 
 def test_catalogue_http_error_is_not_up():
     assert doctor.check_catalogue(get=lambda url, timeout=6: 503).status == FAIL
+
+
+def test_catalogue_probes_use_https():
+    assert all(u.startswith("https://") for u in doctor.VIZIER_URLS + doctor.ESA_URLS)
+
+
+# ---- home paths
+
+@pytest.mark.parametrize("text, want", [
+    ("/home/ann/Library/x not found", "~/Library/x not found"),
+    ("at /home/ann (cache)", "at ~ (cache)"),
+    ("xattr -dr com.apple.quarantine '/home/ann/Library/Caches/darkroom/starnet/a b'",
+     "xattr -dr com.apple.quarantine ~/'Library/Caches/darkroom/starnet/a b'"),
+    ('chmod +x "/home/ann/x"', 'chmod +x ~/"x"'),
+    ("cd '/home/ann'", "cd ~"),
+    ("/home/anna/x and /srv/home/ann/y and /home/ann.bak", "/home/anna/x and /srv/home/ann/y and /home/ann.bak"),
+    ("free at /home/ann.", "free at ~."),
+])
+def test_tilde(text, want):
+    assert doctor.tilde(text, home="/home/ann") == want
+
+
+def test_output_hides_the_home_folder(monkeypatch, capsys):
+    home = str(Path.home())
+    res = [Result("denoise model", FAIL, f"not found: {home}/Library/model.onnx", f"set X to '{home}/a'")]
+    monkeypatch.setattr(doctor, "run_checks", lambda args: res)
+    doctor.main(["--json"])
+    out = capsys.readouterr().out
+    assert home not in out and "~/Library/model.onnx" in out and "~/'a'" in out
+    doctor.main([])
+    out = capsys.readouterr().out
+    assert home not in out and "~/Library/model.onnx" in out
+    assert home not in doctor.format_table(res)
 
 
 # ---- disk

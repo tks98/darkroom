@@ -11,34 +11,56 @@
 #   docker/darkroom-docker --work ~/astro/m31 -- get-starnet          # once; you must accept StarNet's licence
 #   docker/darkroom-docker --subs ~/astro/M31_sub --darks ~/astro/darklibrary --work ~/astro/m31 -- run --work /work
 #
-# Downloads (GraXpert's models, StarNet) are kept in the Docker volume "darkroom-cache".
+# Downloads (GraXpert's models, StarNet) are kept in the Docker volume "darkroom-cache"
+# (another volume: DARKROOM_CACHE_VOLUME=name).
 set -euo pipefail
 
 image="${DARKROOM_IMAGE:-darkroom}"
+volume="${DARKROOM_CACHE_VOLUME:-darkroom-cache}"
 work="" subs="" darks=""
-usage() { sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; }
+die() { echo "darkroom-docker: $*" >&2; exit 2; }
+
+# value OPTION ARGS...: the argument after OPTION, which must be there and not be another option
+value() {
+    if [ $# -lt 2 ] || [ -z "$2" ] || [ "${2#--}" != "$2" ]; then
+        usage >&2
+        die "$1 needs a value"
+    fi
+    printf '%s' "$2"
+}
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --work)  work="$2"; shift 2 ;;
-        --subs)  subs="$2"; shift 2 ;;
-        --darks) darks="$2"; shift 2 ;;
-        --image) image="$2"; shift 2 ;;
+        --work)  work="$(value "$@")"; shift 2 ;;
+        --subs)  subs="$(value "$@")"; shift 2 ;;
+        --darks) darks="$(value "$@")"; shift 2 ;;
+        --image) image="$(value "$@")"; shift 2 ;;
+        --work=*)  work="${1#*=}"; shift ;;
+        --subs=*)  subs="${1#*=}"; shift ;;
+        --darks=*) darks="${1#*=}"; shift ;;
+        --image=*) image="${1#*=}"; shift ;;
         -h|--help) usage; exit 0 ;;
         --) shift; break ;;
-        *) echo "darkroom-docker: unknown option $1 (put darkroom's own arguments after --)" >&2; exit 2 ;;
+        *) usage >&2; die "unknown option $1 (put darkroom's own arguments after --)" ;;
     esac
 done
-[ -n "$work" ] || { echo "darkroom-docker: --work DIR is required" >&2; exit 2; }
-mkdir -p "$work"
+[ -n "$work" ] || { usage >&2; die "--work DIR is required"; }
+[ -n "$image" ] || die "--image needs a name"
+for pair in "--subs:$subs" "--darks:$darks"; do
+    opt="${pair%%:*}" dir="${pair#*:}"
+    [ -z "$dir" ] || [ -d "$dir" ] || die "$opt $dir: no such folder"
+done
+[ ! -e "$work" ] || [ -d "$work" ] || die "--work $work exists and is not a folder"
+mkdir -p -- "$work"
 
-abs() { (cd "$1" && pwd -P); }
-args=(--rm --platform linux/amd64 -v darkroom-cache:/cache -v "$(abs "$work"):/work")
-[ -n "$subs" ]  && args+=(-v "$(abs "$subs"):/subs:ro")
-[ -n "$darks" ] && args+=(-v "$(abs "$darks"):/darks:ro")
-[ -t 0 ] && [ -t 1 ] && args+=(-it)
-# On Linux, write files as you rather than as root. Docker Desktop on macOS maps
-# ownership of bind mounts by itself.
-[ "$(uname -s)" = "Linux" ] && args+=(--user "$(id -u):$(id -g)")
+abs() { (cd -- "$1" && pwd -P); }
+args=(--rm --platform linux/amd64 -v "$volume:/cache" -v "$(abs "$work"):/work")
+if [ -n "$subs" ]; then args+=(-v "$(abs "$subs"):/subs:ro"); fi
+if [ -n "$darks" ]; then args+=(-v "$(abs "$darks"):/darks:ro"); fi
+if [ -t 0 ] && [ -t 1 ]; then args+=(-it); fi
+# Run as you rather than as the image's own user, so files in the work folder are yours (on
+# Linux; Docker Desktop on macOS and Windows maps bind-mount ownership by itself).
+args+=(--user "$(id -u):$(id -g)")
 
 exec docker run "${args[@]}" "$image" "$@"

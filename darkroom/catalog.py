@@ -15,9 +15,12 @@ cached files. The only data sent is the ADQL query (sky coordinates).
 """
 from __future__ import annotations
 
+import http.client
 import os
 import re
 import ssl
+import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -29,6 +32,10 @@ from . import tools
 TAP_URL = "https://gea.esac.esa.int/tap-server/tap/sync"
 USER_AGENT = "darkroom"
 TIMEOUT = 180
+ATTEMPTS = 3                    # tries per query (dropped connections, cut-off answers, HTTP 429/5xx)
+BACKOFF = 5.0                   # seconds before the second try, doubled for each further one
+MAX_ROWS = 1_000_000            # stars one query may return (MAXREC is sent as this + 1)
+SERVER_ROW_LIMIT = 50_000       # the sync service's default row limit, applied without notice
 HEADER = "ra,dec,pmra,pmdec,mag,bmag,teff"
 GAIA_DR3 = 2                    # Siril's catalogue number in the cache file name
 
@@ -156,33 +163,64 @@ def _ssl_context() -> ssl.SSLContext:
     return ctx
 
 
+def _post(req, timeout: float) -> str:
+    with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as r:
+        return r.read().decode("utf-8", errors="replace")
+
+
 def fetch(ra: float, dec: float, radius_deg: float, maglim: float, url: str = TAP_URL,
-          timeout: float = TIMEOUT) -> str:
-    """Query the ESA Gaia archive; return validated CSV text with Siril's header line."""
+          timeout: float = TIMEOUT, max_rows: int = MAX_ROWS, attempts: int = ATTEMPTS,
+          sleep=None) -> str:
+    """Query the ESA Gaia archive; return validated CSV text with Siril's header line.
+
+    A dropped connection or a cut-off answer is tried again (``attempts`` in all). The
+    archive's sync service stops at 50000 rows unless MAXREC says otherwise, without saying
+    that it did, so the query asks for one row more than ``max_rows``: a field with more
+    stars than that is an error, never a catalogue that silently lacks stars."""
     body = urllib.parse.urlencode({"REQUEST": "doQuery", "LANG": "ADQL", "FORMAT": "csv",
+                                   "MAXREC": str(max_rows + 1),
                                    "QUERY": adql(ra, dec, radius_deg, maglim)}).encode()
     req = urllib.request.Request(url, data=body, headers={"User-Agent": USER_AGENT}, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as r:
-            text = r.read().decode("utf-8", errors="replace")
-    except (urllib.error.URLError, OSError) as e:
-        raise tools.StageError(f"Gaia archive request failed ({url}): {e}") from None
+    for i in range(attempts):
+        try:
+            text = _post(req, timeout)
+            break
+        except urllib.error.HTTPError as e:
+            if not (e.code == 429 or e.code >= 500) or i == attempts - 1:
+                raise tools.StageError(f"Gaia archive request failed ({url}): {e}") from None
+            err = e
+        except (urllib.error.URLError, OSError, http.client.HTTPException) as e:
+            if i == attempts - 1:
+                raise tools.StageError(f"Gaia archive request failed ({url}): "
+                                       f"{getattr(e, 'reason', None) or e!r}") from None
+            err = e
+        wait = BACKOFF * 2 ** i
+        print(f"catalogue: Gaia archive request failed ({getattr(err, 'reason', None) or err!r}); "
+              f"trying again in {wait:g}s", flush=True)
+        (sleep or time.sleep)(wait)
     text = text.replace("\r\n", "\n")
     try:
-        validate_csv(text)
+        n = validate_csv(text)
     except ValueError as e:
         raise tools.StageError(f"Gaia archive returned something unexpected: {e}") from None
+    if n > max_rows or n == SERVER_ROW_LIMIT:
+        raise tools.StageError(f"the Gaia archive's answer was cut off at {n} stars (the field of "
+                               f"{radius_deg:.2f} deg at G <= {maglim:g} holds more); not using it")
     return text
 
 
 def write_atomic(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".darkroom-tmp")
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".darkroom-tmp")
     try:
-        tmp.write_text(text)
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
         os.replace(tmp, path)
     finally:
-        tmp.unlink(missing_ok=True)
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
 
 
 def recover(log_text: str, log=print, fetcher=None) -> list[Path]:

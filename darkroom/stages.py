@@ -1,8 +1,8 @@
 """Pipeline stages. Each reads/writes fixed filenames inside the work directory."""
 from __future__ import annotations
 
+import hashlib
 import json
-import os
 import re
 import shutil
 from pathlib import Path
@@ -24,6 +24,39 @@ STRETCHED_TIF = "stretched.tif"
 STARLESS = "starless.tif"
 FINAL = "final"
 PROCESS = "process"
+
+# Version of each stage's own maths and scripts. Bump a stage's number in any change that
+# changes its output, so work dirs made by an older darkroom rerun that stage (and the stages
+# after it). A record without one (made before these numbers existed) counts as version 1.
+ALGORITHM = {"stack": 1, "bge": 1, "color": 1, "denoise": 1, "deconv": 1, "stretch": 1,
+             "starnet": 1, "finish": 1}
+
+FITS_SUFFIXES = (".fit", ".fits", ".fts")       # compared in lower case
+
+
+def is_fits(p: Path) -> bool:
+    return Path(p).suffix.lower() in FITS_SUFFIXES
+
+
+def fits_files(folder: Path) -> list[Path]:
+    """The FITS files (.fit, .fits, .fts in any case) directly inside ``folder``; no hidden files."""
+    folder = Path(folder)
+    return sorted(p for p in folder.iterdir()
+                  if is_fits(p) and not p.name.startswith(".") and p.is_file())
+
+
+def select_subs(subs: Path, sub_glob: str = "*.fit") -> tuple[list[Path], bool]:
+    """The subs to stack: the FITS files in ``subs`` that match ``sub_glob`` or, when none does,
+    every FITS file there (as `darkroom init` does). Returns (files, whether sub_glob matched)."""
+    from . import darks
+    every = fits_files(subs)
+    chosen = [p for p in every if darks.matches(p.name, sub_glob)]      # as init surveys them
+    return (chosen, True) if chosen else (every, False)
+
+
+def selection_digest(files: list[Path]) -> str:
+    """A short digest of the names of the selected subs (sorted), for the stack record."""
+    return hashlib.sha1("\n".join(sorted(p.name for p in files)).encode()).hexdigest()[:16]
 
 
 def _abs(p) -> Path:
@@ -91,13 +124,17 @@ def stack(work: Path, subs: Path, dark: Path | None, framing: str = "min", keep_
         subs = _abs(subs)
         if not subs.is_dir():
             raise tools.StageError(f"subs directory not found: {subs}")
-        fits_files = sorted(p.name for p in subs.glob("*.fit"))
-        if not fits_files:
-            raise tools.StageError(f"no *.fit files in {subs}")
-        extra = set(fits_files) - {p.name for p in subs.glob(sub_glob)}
-        if extra:
-            print(f"WARNING: {len(extra)} .fit file(s) in {subs} do not match {sub_glob} "
-                  f"(e.g. {sorted(extra)[0]}); Siril stacks every .fit in the folder", flush=True)
+        sub_files, matched = select_subs(subs, sub_glob)
+        if not sub_files:
+            raise tools.StageError(f"no FITS files (*.fit, *.fits, *.fts) in {subs}")
+        every = fits_files(subs)
+        if not matched:
+            print(f"stack: no file in {subs} matches {sub_glob}; stacking every FITS file there "
+                  f"({len(sub_files)})", flush=True)
+        elif len(every) > len(sub_files):
+            extra = sorted({p.name for p in every} - {p.name for p in sub_files})
+            print(f"stack: {len(extra)} FITS file(s) in {subs} do not match {sub_glob} and are not "
+                  f"stacked (e.g. {extra[0]})", flush=True)
         if dark is not None and bias is not None:
             raise tools.StageError("the lights are calibrated with a master dark or a master bias, not both")
         masters = {}
@@ -115,10 +152,7 @@ def stack(work: Path, subs: Path, dark: Path | None, framing: str = "min", keep_
                     "--reuse-registration to re-frame and re-stack the frames already there.")
             remove_process(work)
         process.mkdir(parents=True, exist_ok=True)
-        siril_subs = subs
-        if not os.access(subs, os.W_OK):
-            siril_subs = stage_subs(subs, process)
-        sub_files = sorted(subs.glob("*.fit"))
+        siril_subs = stage_subs(subs, process, sub_files)
         if mosaic:
             _mosaic_solve(work, sub_files, siril_subs, calib, focal, pixel)
             name = "mosaic_stack.ssf"
@@ -243,21 +277,23 @@ def warn_if_mosaic(sub_files: list[Path], focal: float, pixel: float) -> None:
 STAGED_SUBS = "subs"
 
 
-def stage_subs(subs: Path, process: Path, log=print) -> Path:
-    """Siril (1.4.5 on Linux at least) refuses to `cd` into a read-only folder, such as subs
-    mounted read-only into a container. Give it <process>/subs instead: one symlink per *.fit
-    sub, same names. It is deleted with the rest of <work>/process."""
+def stage_subs(subs: Path, process: Path, files: list[Path] | None = None, log=print) -> Path:
+    """<process>/subs: one symlink per selected sub (``files``, by default every FITS file in
+    ``subs``), with the same names. Siril runs `link` there, so it stacks exactly those files,
+    never works inside the user's folder, and copes with a read-only one (Siril 1.4.5 on Linux
+    refuses to `cd` into a read-only folder, such as subs mounted read-only into a container).
+    It is deleted with the rest of <work>/process."""
     staged = process / STAGED_SUBS
     if staged.is_symlink() or staged.is_file():
         staged.unlink()
     elif staged.is_dir():
         shutil.rmtree(staged)
     staged.mkdir(parents=True)
-    files = sorted(subs.glob("*.fit"))
+    if files is None:
+        files = fits_files(subs)
     for f in files:
-        (staged / f.name).symlink_to(subs / f.name)
-    log(f"stack: {subs} is not writable, which Siril cannot work from; linked its {len(files)} "
-        f"*.fit files into {staged}")
+        (staged / f.name).symlink_to(Path(subs) / f.name)
+    log(f"stack: linked {len(files)} sub(s) from {subs} into {staged}")
     return staged
 
 
@@ -495,6 +531,7 @@ def starnet(work: Path, starnet_dir: str | None = None) -> None:
     backend = sn.detect(d)
     if backend is None:
         raise tools.StageError(f"neither starnet2 nor starnet++ found in {d}")
+    sn.require_runnable(backend)            # macOS: never start a StarNet that Gatekeeper would block
     log = tools.logs_dir(work) / "starnet.log"
     log.write_text(f"[darkroom] {backend.label} in {d}\n")
     print(f"starnet: {backend.label} in {d}", flush=True)
@@ -603,7 +640,8 @@ def result_params(stage: str, table: dict) -> dict:
     For ``stack`` pass a table that already has ``subs`` and the resolved ``dark`` (and ``bias``
     and ``flats``: the master files the lights are calibrated with, or None)."""
     if stage == "stack":
-        return {"subs": str(table["subs"]), "dark": str(table["dark"]) if table["dark"] else "none",
+        return {**_subs_selection(table), **_mosaic_optics(table),
+                "subs": str(table["subs"]), "dark": str(table["dark"]) if table["dark"] else "none",
                 # recorded only when used, so work dirs made before these keys existed stay up to date
                 **{k: str(table[k]) for k in ("bias", "flats") if table.get(k)},
                 "framing": table["framing"], "keep_fwhm": float(table["keep_fwhm"]),
@@ -633,6 +671,30 @@ def result_params(stage: str, table: dict) -> dict:
     return out
 
 
+def _subs_selection(table: dict) -> dict:
+    """subs_count and subs_digest: which subs a stack is made of, so adding or removing one
+    reruns it. Left out when the stack table has no sub_glob or the subs folder is not there
+    (an unplugged drive); see _OPTIONAL_KEYS."""
+    subs = Path(table["subs"])
+    if not table.get("sub_glob") or not subs.is_dir():
+        return {}
+    files, _ = select_subs(subs, table["sub_glob"])
+    return {"subs_count": len(files), "subs_digest": selection_digest(files)}
+
+
+def _mosaic_optics(table: dict) -> dict:
+    """focal and pixel drive a mosaic's plate solve, so they are part of its stack record."""
+    if not table.get("mosaic"):
+        return {}
+    return {k: float(table[k]) for k in ("focal", "pixel") if table.get(k) is not None}
+
+
+# Keys added to a stage's record after work dirs already existed. Each is compared only when
+# both the old record and the new parameters have it, so an older record stays up to date (a
+# restack takes hours) and gets the key on the next real run.
+_OPTIONAL_KEYS = {"stack": ("subs_count", "subs_digest", "focal", "pixel")}
+
+
 def stretch_params(stretch_table: dict, deconv_table: dict) -> dict:
     """Recorded settings of the stretch stage. Its input is recorded only when it is
     deconvolved.fits, so work dirs made before the deconv stage existed (or with it off) stay
@@ -655,7 +717,7 @@ def inputs(work: Path, stage: str, params: dict) -> list[Path]:
     work = _abs(work)
     if stage == "stack":
         subs = Path(params["subs"])
-        files = sorted(subs.glob("*.fit")) if subs.is_dir() else []
+        files = fits_files(subs) if subs.is_dir() else []
         if params["dark"] != "none":
             files.append(Path(params["dark"]))
         files += [Path(params[k]) for k in ("bias", "flats") if params.get(k)]
@@ -676,25 +738,87 @@ def _plain(params: dict) -> dict:
     return json.loads(json.dumps(params, sort_keys=True))
 
 
+def tool_versions(work: Path, stage: str) -> dict:
+    """The versions of the external tools a stage used, where they are cheap to get (mostly
+    from the stage's log). Written to the record for information only; never compared."""
+    work = _abs(work)
+
+    def grep(name: str, pattern: str) -> str | None:
+        try:
+            text = (tools.logs_dir(work) / name).read_text(errors="replace")[:200_000]
+        except OSError:
+            return None
+        m = re.search(pattern, text)
+        return m.group(1) if m else None
+
+    def package(name: str) -> str | None:
+        from importlib import metadata
+        try:
+            return metadata.version(name)
+        except metadata.PackageNotFoundError:
+            return None
+
+    out = {}
+    try:
+        if stage in ("stack", "color", "stretch"):
+            out["siril"] = grep(f"{stage}.log", r"Welcome to siril (\S+)")
+        elif stage == "bge":
+            out["graxpert"] = grep("bge.log", r"GraXpert CLI.*?version: (\S+)")
+            out["graxpert_bge_model"] = grep("bge.log", r"Using AI version (\S+?)\.?\s")
+        elif stage in ("denoise", "deconv"):
+            from . import models
+            key = "graxpert_denoise_model" if stage == "denoise" else "graxpert_deconv_model"
+            out[key] = models.MODEL_VERSION if stage == "denoise" else models.DECONV_VERSION
+            out["onnxruntime"] = package("onnxruntime") or package("onnxruntime-gpu")
+        elif stage == "starnet":
+            out["starnet"] = grep("starnet.log", r"\[darkroom\] (.+?) in ")
+    except Exception:           # information only: never fail a run over it
+        return {}
+    return {k: v for k, v in out.items() if v}
+
+
 def record_params(work: Path, stage: str, params: dict) -> None:
-    """Remember the parameters of a successful run of ``stage``."""
+    """Remember the parameters of a successful run of ``stage`` (and, for the pipeline stages,
+    their algorithm version and, for information, the tool versions)."""
     p = params_file(work, stage)
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_name(p.name + ".tmp")
-    tmp.write_text(json.dumps({"stage": stage, "darkroom": __version__, "params": _plain(params)},
-                              indent=2, sort_keys=True) + "\n")
+    record = {"stage": stage, "darkroom": __version__, "params": _plain(params)}
+    if stage in ALGORITHM:
+        record["algorithm"] = ALGORITHM[stage]
+        record["tools"] = tool_versions(work, stage)
+    tmp.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
     tmp.replace(p)
 
 
-def recorded_params(work: Path, stage: str) -> dict | None:
+def recorded(work: Path, stage: str) -> dict | None:
+    """The whole record of the last successful run of ``stage``, or None."""
     try:
-        return json.loads(params_file(work, stage).read_text())["params"]
-    except (OSError, ValueError, KeyError, TypeError):
+        rec = json.loads(params_file(work, stage).read_text())
+    except (OSError, ValueError):
         return None
+    return rec if isinstance(rec, dict) and isinstance(rec.get("params"), dict) else None
+
+
+def recorded_params(work: Path, stage: str) -> dict | None:
+    rec = recorded(work, stage)
+    return rec["params"] if rec else None
 
 
 def forget_params(work: Path, stage: str) -> None:
     params_file(work, stage).unlink(missing_ok=True)
+
+
+def changed_keys(stage: str, old: dict, new: dict) -> list[str]:
+    """The recorded settings that differ between ``old`` and ``new``. A key of _OPTIONAL_KEYS
+    counts only when both have it."""
+    old, new = _plain(old), _plain(new)
+    skip = {k for k in _OPTIONAL_KEYS.get(stage, ()) if k not in old or k not in new}
+    return sorted(k for k in (set(old) | set(new)) - skip if old.get(k) != new.get(k))
+
+
+def same_params(stage: str, old: dict | None, new: dict) -> bool:
+    return old is not None and not changed_keys(stage, old, new)
 
 
 def up_to_date(work: Path, stage: str, params: dict) -> tuple[bool, str]:
@@ -703,12 +827,14 @@ def up_to_date(work: Path, stage: str, params: dict) -> tuple[bool, str]:
     missing = [p.name for p in outs if not p.is_file()]
     if missing:
         return False, f"{missing[0]} does not exist"
-    old = recorded_params(work, stage)
-    if old is None:
+    rec = recorded(work, stage)
+    if rec is None:
         return False, "no record of the parameters of its last run"
-    new = _plain(params)
-    if old != new:
-        changed = sorted(k for k in set(old) | set(new) if old.get(k) != new.get(k))
+    was, now = rec.get("algorithm", 1), ALGORITHM.get(stage, 1)
+    if was != now:
+        return False, f"darkroom's {stage} algorithm changed (version {was} -> {now})"
+    changed = changed_keys(stage, rec["params"], params)
+    if changed:
         return False, "changed: " + ", ".join(changed)
     ins = inputs(work, stage, params)
     gone = [p for p in ins if not p.exists()]

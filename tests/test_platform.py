@@ -222,7 +222,9 @@ def test_doctor_starnet2_quarantined_on_macos_is_not_run(tmp_path):
             return 0, "Mach-O 64-bit executable arm64"
         if cmd[0] == "xattr":
             assert cmd[1] == "-p"
-            return (0, "q") if cmd[-1].endswith("libx.dylib") else (1, "")
+            return (0, "q") if cmd[-1].endswith("libx.dylib") else (1, "No such xattr: com.apple.quarantine")
+        if cmd[0] == "spctl":
+            return 3, f"{cmd[-1]}: rejected\n"
         if cmd[0] == "./starnet2":
             return 0, '{"product":"starnet2","version":"2.6.2","build":"0242","backend":"coreml"}'
         raise AssertionError(cmd)

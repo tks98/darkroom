@@ -102,6 +102,68 @@ def detect(folder: Path) -> Backend | None:
     return None
 
 
+@dataclass(frozen=True)
+class Gatekeeper:
+    """macOS: whether StarNet in a folder may be executed. problem is None when it may."""
+    problem: str | None = None
+    fix: str = ""
+    note: str = ""
+
+
+def macos_files(folder: Path, exe: Path) -> list[Path]:
+    """The files macOS checks when exe starts: the executable and the libraries next to it."""
+    return [exe, *sorted(folder.glob("*.dylib")), *sorted((folder / "lib").glob("*.dylib"))]
+
+
+def gatekeeper(folder: Path, exe: Path, run=None, system: str | None = None, who: str = "darkroom") -> Gatekeeper:
+    """The same policy as for Siril and GraXpert (toolset.gatekeeper_block), for a StarNet folder:
+    not executed when a quarantine flag cannot be read, or when a quarantined file is neither
+    allowed by the user nor accepted by Gatekeeper. A StarNet2 installed by an earlier
+    `darkroom get-starnet`, which did not mark it as downloaded, has never been assessed by
+    macOS; it is executed only if Gatekeeper accepts it as it is. Only reads flags."""
+    import sys
+    from . import toolset
+    system = sys.platform if system is None else system
+    if system != "darwin":
+        return Gatekeeper()
+    run = run or toolset._run
+    folder = Path(folder)
+
+    def rel(f: Path) -> str:
+        try:
+            return str(f.relative_to(folder))
+        except ValueError:
+            return str(f)
+    v = toolset.judge(macos_files(folder, exe), run)
+    if v.reason == "unknown":
+        return Gatekeeper(f"could not read the quarantine flag of {', '.join(rel(f) for f in v.files)} ({v.detail}); "
+                          f"{who} did not execute it",
+                          f"check that `xattr -p {toolset.QUARANTINE} '{v.files[0]}'` works in Terminal, then try again")
+    if v.reason == "blocked":
+        return Gatekeeper(f"quarantined by macOS ({', '.join(rel(f) for f in v.files)}) and not notarized "
+                          f"({v.detail}); Gatekeeper will block it; {who} did not execute it",
+                          f"allowing it is your decision; this clears the flag for the folder: "
+                          f"xattr -dr {toolset.QUARANTINE} '{folder}'")
+    acc = read_accepted(folder)
+    if acc is not None and "quarantine" not in acc and not v.note:
+        ok, source = toolset.assess(exe, run)
+        if not ok:
+            return Gatekeeper(f"{rel(exe)} was installed by an earlier darkroom that did not mark it as downloaded, "
+                              f"so macOS has never assessed it, and Gatekeeper does not accept it "
+                              f"({source or 'rejected'}); {who} did not execute it",
+                              "reinstall it with `darkroom get-starnet --force` (you are asked to accept its licence "
+                              "again): it is then marked as downloaded, and macOS asks you before it first runs")
+        return Gatekeeper(note=f"accepted by Gatekeeper: {source}")
+    return Gatekeeper(note=v.note)
+
+
+def require_runnable(backend: Backend) -> None:
+    """StageError instead of starting a StarNet that macOS would block (see gatekeeper)."""
+    g = gatekeeper(backend.dir, backend.exe)
+    if g.problem:
+        raise tools.StageError(f"StarNet in {backend.dir}: {g.problem}. {g.fix[0].upper() + g.fix[1:]}")
+
+
 def installs_root() -> Path:
     """Where `darkroom get-starnet` installs StarNet2: <cache>/starnet/<zip name>/."""
     return tools.cache_dir() / "starnet"

@@ -91,3 +91,44 @@ def test_render_file_writes_absolute_script(tmp_path):
     p = siril.render_file("stretch.ssf", tmp_path, VALUES["stretch.ssf"])
     assert p.is_absolute() and p.parent == (tmp_path / "logs").resolve()
     assert "{{" not in p.read_text()
+
+
+def test_run_script_never_saves_into_the_users_settings(monkeypatch, tmp_path):
+    """siril-cli saves its settings when a script ends (set16bits, setext...): every script
+    runs on a throwaway copy of them, which starts as the user's settings."""
+    user = tmp_path / "siril" / siril.CONFIG_FILE
+    user.parent.mkdir()
+    user.write_text("[core]\nforce_16bit=true\nextension=.fit\n")
+    monkeypatch.setattr(siril, "config_dir", lambda: user.parent)
+    monkeypatch.setattr(siril.tools, "require_executable", lambda p, v: Path("/bin/siril-cli"))
+    seen = []
+
+    def fake_siril(cmd, log):
+        cfg = Path(cmd[cmd.index("-i") + 1])
+        seen.append((cfg, cfg.read_text()))
+        cfg.write_text("[core]\nforce_16bit=false\nextension=.fits\n")      # what Siril saves
+        log.write_text("log: Script execution finished successfully.\n")
+    monkeypatch.setattr(siril.tools, "run_tool", fake_siril)
+    s = tmp_path / "stack.ssf"
+    s.write_text("set32bits\nsetext fits\n")
+    for _ in range(2):
+        siril.run_script(s, tmp_path / "log")
+    assert user.read_text() == "[core]\nforce_16bit=true\nextension=.fit\n"
+    assert [text for _, text in seen] == [user.read_text()] * 2           # each run starts afresh
+    assert all(cfg.parent != user.parent and not cfg.exists() for cfg, _ in seen)
+
+
+def test_run_script_failure_still_removes_the_copy(monkeypatch, tmp_path):
+    monkeypatch.setattr(siril, "config_dir", lambda: tmp_path / "none")
+    monkeypatch.setattr(siril.tools, "require_executable", lambda p, v: Path("/bin/siril-cli"))
+    seen = []
+
+    def fake_siril(cmd, log):
+        seen.append(Path(cmd[cmd.index("-i") + 1]))
+        log.write_text("log: Error in line 3\n")
+    monkeypatch.setattr(siril.tools, "run_tool", fake_siril)
+    s = tmp_path / "x.ssf"
+    s.write_text("")
+    with pytest.raises(siril.tools.StageError, match="x.ssf failed"):
+        siril.run_script(s, tmp_path / "log")
+    assert not seen[0].exists()

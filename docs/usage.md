@@ -61,6 +61,10 @@ Flats correct vignetting and dust shadows only when they match the optical train
 
 `run` goes through the stages in order and skips any stage whose output is up to date. A stage counts as up to date when its outputs exist, are newer than its inputs, and were made with the settings now in force. So after you change a setting, run it again and only the affected stages are redone: a change to `[finish] gamma` takes about a second, while a change to `[stack]` redoes everything.
 
+The stack's record also holds the number of subs and a digest of their names, so adding or removing a sub reruns the stack, even when the new sub is dated before the last stack. Work directories stacked before this record existed stay up to date until their next real stack. Each record also holds the version of the stage's algorithm in darkroom; when a new darkroom changes how a stage computes its output, that stage and the ones after it rerun. The versions of Siril, GraXpert, onnxruntime and StarNet used are written to the records in `<work>/logs/*.params.json` for reference; they do not cause a rerun.
+
+A stack that has to run while `<work>/process` still holds the frames of the last one stops and asks for `--force`, which deletes those frames first.
+
 | Flag | Effect |
 |---|---|
 | `--to STAGE` | stop after this stage |
@@ -68,6 +72,8 @@ Flats correct vignetting and dust shadows only when they match the optical train
 | `--force` | redo everything |
 
 The stages are `stack`, `bge`, `color`, `denoise`, `stretch`, `starnet` and `finish`. [How it works](pipeline.md) describes each one.
+
+`run` keeps an existing stack when its subs folder, dark library or calibration frames are not available (a drive is unplugged) and the settings are the ones it was made with. A changed calibration setting that cannot be applied (a mistyped path, frames of another size) fails the run.
 
 ## Running one stage
 
@@ -128,7 +134,7 @@ The Seestar's mosaic mode moves the mount between frames: a couple of frames at 
 
 `stack` prints how many frames were solved and stacked, and the crop. On the Rosette mosaic, 139 of 151 frames were solved (most of the others had too few stars), 127 were stacked, and the 2452×4140 canvas was cropped to 2416×3905. On a 215-frame mosaic around Alnilam, whose pointings formed a diagonal band, 185 were solved and 173 stacked onto a 5017×4582 canvas.
 
-The later stages need an image with data everywhere, so the canvas has to be cropped, and on a diagonal mosaic an upright rectangle wastes most of it: on Alnilam the largest one was 3737×2373, 52% of the pixels with data. So `stack` tries every angle and, when the best one keeps at least 10% more, turns the image before cropping. On Alnilam it turned the canvas 31.75° clockwise and kept 4140×2814, 69% of the pixels with data, with all three belt stars, the Horsehead and the Flame Nebula. The Rosette mosaic is upright already, and its crop is the same as before. A turned image is resampled once (cubic spline: stars about 2% wider, noise unchanged), and north is no longer up; the plate solution is turned with it. Set `[stack] mosaic_crop = "rect"` to keep the canvas upright (see [configuration](configuration.md#framing)). When the crop still throws away too much, start from `stack_full.fit` and crop it yourself.
+The later stages need an image with data everywhere, so the canvas has to be cropped, and on a diagonal mosaic an upright rectangle wastes most of it: on Alnilam the largest one was 3737×2373, 52% of the pixels with data. So `stack` tries every angle and, when the best one keeps at least 10% more, turns the image before cropping. On Alnilam it turned the canvas 27.5° clockwise and kept 4096×2951, 71% of the pixels with data, with all three belt stars, the Horsehead and the Flame Nebula. The Rosette mosaic is upright already, and its crop is the same as before. A turned image is resampled once (cubic spline: stars about 2% wider, noise unchanged), and north is no longer up; the plate solution is turned with it. Set `[stack] mosaic_crop = "rect"` to keep the canvas upright (see [configuration](configuration.md#framing)). When the crop still throws away too much, start from `stack_full.fit` and crop it yourself.
 
 `--reuse-registration` restacks an already solved mosaic, for example with other `keep_*` settings. A mosaic needs more disk space than a normal stack, since the registered frames are 32-bit and as big as the whole canvas.
 

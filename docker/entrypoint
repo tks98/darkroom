@@ -1,0 +1,16 @@
+#!/bin/sh
+# Entry point of the darkroom image: check that the cache volume is writable, then run darkroom.
+# A volume first used with an image from before November 2026, which ran as root, holds
+# folders owned by root; darkroom would then fail somewhere inside a stage with "Permission denied".
+if [ "$(id -u)" != 0 ]; then
+    for d in "$HOME" "$HOME/.cache" "$HOME/.config" "$HOME/.local" "$HOME/.local/share"; do
+        if [ -e "$d" ] && [ ! -w "$d" ]; then
+            echo "darkroom: $d is not writable by uid $(id -u): the cache volume was made by an older" >&2
+            echo "darkroom image, which ran as root. Hand its files to your user once:" >&2
+            echo "  docker run --rm --user 0 -v darkroom-cache:/cache --entrypoint chown darkroom -R \"\$(id -u):\$(id -g)\" /cache" >&2
+            echo "or remove the volume (its downloads are fetched again): docker volume rm darkroom-cache" >&2
+            exit 2
+        fi
+    done
+fi
+exec darkroom "$@"

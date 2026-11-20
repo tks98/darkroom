@@ -22,7 +22,7 @@ bash setup.sh --skill-dir path/to/agent/skills
 bash setup.sh --skill-dir ~/.claude/skills --skill-dir path/to/other/agent/skills
 ```
 
-`--no-skill` skips linking. Because it is a link, updating the repo updates the skill. With it installed, asking the agent to process a folder of subs is enough to start.
+`--no-skill` skips linking. If `<dir>/darkroom` already links to another darkroom checkout, `setup.sh` says so and leaves it; pass `--replace-skill` to link it to this checkout. Because it is a link, updating the repo updates the skill. With it installed, asking the agent to process a folder of subs is enough to start.
 
 ## Agents that read AGENTS.md
 

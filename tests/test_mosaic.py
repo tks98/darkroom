@@ -206,13 +206,40 @@ def test_valid_box_edge_cases():
     assert mosaic.valid_box(one, coarse=3) == (6, 4, 1, 1)
 
 
-def test_valid_mask_needs_every_channel():
+def test_valid_mask_empty_means_zero_in_every_channel():
     d = np.ones((3, 4, 5), np.float32)
-    d[1, 0, 0] = 0
-    d[2, 3, 4] = np.nan
+    d[1, 0, 0] = 0                              # one channel at 0: still data
+    d[:, 0, 4] = 0                              # every channel at 0, at the edge: no data
+    d[2, 3, 4] = np.nan                         # not finite, at the edge: no data
     m = mosaic.valid_mask(d)
-    assert m.shape == (4, 5) and not m[0, 0] and not m[3, 4] and m.sum() == 18
+    assert m.shape == (4, 5) and m[0, 0] and not m[0, 4] and not m[3, 4] and m.sum() == 18
     assert mosaic.valid_mask(np.ones((4, 5))).all()
+    assert not mosaic.valid_mask(np.zeros((3, 4, 5))).any()
+
+
+def test_valid_mask_ignores_small_holes_but_not_gaps():
+    d = np.ones((3, 60, 80), np.float32)
+    d[:, :, :10] = 0                            # uncovered strip along the edge
+    d[:, 30, 40] = 0                            # one empty pixel inside the data
+    d[:, 10:13, 60:63] = 0                      # a 3x3 hole
+    d[:, 40:55, 20:40] = 0                      # a real gap between frames (300 pixels)
+    m = mosaic.valid_mask(d)
+    assert m[30, 40] and m[10:13, 60:63].all()
+    assert not m[:, :10].any() and not m[40:55, 20:40].any()
+    assert not mosaic.valid_mask(d, max_hole=0)[30, 40]
+
+
+def test_one_empty_pixel_does_not_change_the_crop(tmp_path):
+    h, w = 120, 160
+    data = np.zeros((3, h, w), np.float32)
+    data[:, 10:110, 20:150] = 0.3
+    fits.PrimaryHDU(data, header=wcs_header(h, w)).writeto(tmp_path / "a.fit")
+    data[:, 60, 85] = 0                         # all channels 0 inside the covered area
+    data[0, 30, 30] = 0                         # one channel 0
+    fits.PrimaryHDU(data, header=wcs_header(h, w)).writeto(tmp_path / "b.fit")
+    a = mosaic.crop_to_data(tmp_path / "a.fit", tmp_path / "a_full.fit", mode="rect", log=lambda m: None)
+    b = mosaic.crop_to_data(tmp_path / "b.fit", tmp_path / "b_full.fit", mode="rect", log=lambda m: None)
+    assert a == b
 
 
 def wcs_header(h, w):
