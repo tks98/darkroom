@@ -194,6 +194,10 @@ Past about 2.0 the field starts to look thinned out. `erode` shrinks stars with 
 
 `crop = "2:3"` takes the largest box of that shape that fits, centred on the brightest part of the blurred image (the starless image, or the stretched one when stars are kept). For a target that is small in the frame, `crop_scale` shrinks that box: M13 used `crop = "1:1"` with `crop_scale = 0.45`. `crop_center = "x,y"` overrides the centre when the brightest point is the wrong place, and `"x,y,w,h"` crops by pixels.
 
+## Value checks
+
+Values are checked when the settings are read, before any stage runs: `[color] focal` and `pixel` above 0; `[bge] smoothing` and `[denoise] strength` from 0 to 1; `[stretch] asinh` above 0, `shadows` from -10 to 0, `target_bg` between 0 and 1, `sat` at least -1; `[finish] gamma` and `sharpen_radius` above 0, `mid` between 0 and 1, `black` from 0 to below 1, `sat`, `yb` and `sharpen` at least 0, `core` and `star_strength` from 0 to 1, `erode` a whole number of at least 0. NaN and infinity are refused. The `[color]` names cannot contain a double quote.
+
 ## Looks
 
 A look is a preset for `[stretch]` and `[finish]` (and the SPCC white reference). Three are shipped, in `presets/looks/`:
@@ -209,3 +213,5 @@ To make your own, copy a file from `presets/looks/`, change it, and point `look`
 ## Cameras
 
 Three camera presets are shipped: `seestar-s30-pro` (160 mm, Sony IMX585), `seestar-s30` for the original S30 (150 mm, Siril's `ZWO Seestar S30` sensor entry), and `zwo-asi294mc-pro`, a cooled colour camera (Sony IMX294, 4.63 µm pixels, Bayer RGGB). `init` detects the Seestars from the `CREATOR` keyword in the FITS header and the ASI294MC Pro from `INSTRUME`; a preset whose text equals the header value wins, otherwise the longest matching text, so S30 Pro subs never get the S30 preset. Besides the `[color]` values, each records the Bayer pattern, which files count as subs (`Light_*.fit`), how master darks are named for `dark = "auto"`, and the filter-name mapping. The ASI294MC Pro preset has no focal length, since that depends on the telescope: `init` writes the subs' `FOCALLEN`, and without one you set `[color] focal` yourself. It has no filter map either, since filter names are whatever the capture software was told.
+
+In a camera preset, `[camera]` takes `name`, `match_keyword`, `match`, `bayer` and `sub_glob`, and `[darks]` takes `glob` and `filename` (a regular expression); any other key is an error. A `sub_glob` that ends in `.fit` also matches `.fits` and `.fts`, in any case. With `dark = "auto"`, darks of another size or Bayer pattern than the subs are skipped, and the dark that is picked is checked like one given by name. `EXPOSURE` is read when the header has no `EXPTIME`.

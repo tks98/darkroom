@@ -48,9 +48,9 @@ def fits_files(folder: Path) -> list[Path]:
 def select_subs(subs: Path, sub_glob: str = "*.fit") -> tuple[list[Path], bool]:
     """The subs to stack: the FITS files in ``subs`` that match ``sub_glob`` or, when none does,
     every FITS file there (as `darkroom init` does). Returns (files, whether sub_glob matched)."""
+    from . import darks
     every = fits_files(subs)
-    matched = {p.name for p in Path(subs).glob(sub_glob)}
-    chosen = [p for p in every if p.name in matched]
+    chosen = [p for p in every if darks.matches(p.name, sub_glob)]      # as init surveys them
     return (chosen, True) if chosen else (every, False)
 
 

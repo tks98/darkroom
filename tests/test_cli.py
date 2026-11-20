@@ -63,3 +63,45 @@ def test_env_overrides(monkeypatch, tmp_path):
 def test_missing_input_fails_loudly(tmp_path, capsys):
     assert cli.main(["finish", "--work", str(tmp_path)]) == 1
     assert "stretched.tif" in capsys.readouterr().err
+
+
+def test_a_read_only_work_dir_is_a_message_not_a_traceback(tmp_path, capsys, monkeypatch):
+    import os
+    subs = tmp_path / "subs"
+    subs.mkdir()
+    (subs / "Light_1.fit").write_bytes(b"x")
+    work = tmp_path / "ro"
+    work.mkdir()
+    work.chmod(0o555)
+    try:
+        if os.access(work, os.W_OK):
+            pytest.skip("running with permissions that ignore the mode bits")
+        monkeypatch.delenv("DARKROOM_DEBUG", raising=False)
+        assert cli.main(["stack", "--work", str(work), "--subs", str(subs), "--no-dark"]) == 1
+        err = capsys.readouterr().err
+        assert err.startswith("darkroom stack: error: Permission denied: ") and str(work) in err
+        assert "Traceback" not in err
+    finally:
+        work.chmod(0o755)
+
+
+def test_unexpected_errors_and_the_debug_switch(tmp_path, capsys, monkeypatch):
+    def boom(*a, **k):
+        raise ValueError("SENSOR contains a double quote, which Siril scripts cannot quote")
+    monkeypatch.setattr(stages, "bge", boom)
+    monkeypatch.delenv("DARKROOM_DEBUG", raising=False)
+    assert cli.main(["bge", "--work", str(tmp_path)]) == 1
+    assert "darkroom bge: error: SENSOR contains a double quote" in capsys.readouterr().err
+    monkeypatch.setattr(stages, "bge", lambda *a, **k: (_ for _ in ()).throw(KeyError("no value for X")))
+    assert cli.main(["bge", "--work", str(tmp_path)]) == 1
+    assert "error: no value for X" in capsys.readouterr().err
+    monkeypatch.setenv("DARKROOM_DEBUG", "1")
+    with pytest.raises(KeyError):
+        cli.main(["bge", "--work", str(tmp_path)])
+    assert "DARKROOM_DEBUG" in cli.env_help()
+
+
+def test_a_double_quote_in_a_setting_is_refused_before_any_stage(tmp_path, capsys, monkeypatch):
+    monkeypatch.setattr(stages, "color", lambda *a, **k: pytest.fail("must not run"))
+    assert cli.main(["color", "--work", str(tmp_path), "--sensor", 'Sony "IMX"']) == 1
+    assert "double quote" in capsys.readouterr().err

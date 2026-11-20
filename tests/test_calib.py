@@ -359,3 +359,198 @@ def test_detect_asi294(tmp_path):
     assert darks.detect_camera(seestar / "Light_0001.fit", tables) == "seestar-s30-pro"
     _, meta, _ = config.load_camera("zwo-asi294mc-pro")
     assert (meta["camera"]["bayer"], meta["camera"]["sub_glob"]) == ("RGGB", "Light_*.fit")
+
+
+# --- `run` keeps a stack only while its inputs are unplugged
+
+def run_stack(work):
+    return cli.main(["run", "--work", str(work), "--to", "stack"])
+
+
+@pytest.fixture
+def auto_dark(tmp_path, data, fake_siril, monkeypatch):
+    """A work dir stacked once with a dark picked from a library; returns (work, config text, library)."""
+    monkeypatch.setattr(stages, "frames_kept", lambda log: None)
+    lib = frames(tmp_path / "lib", "MasterDark", 1, FILTER=None, CCD_TEMP=-0.3)
+    work = tmp_path / "w"
+    work.mkdir()
+    base = (f'[target]\nsubs = "{data["subs"]}"\ndark = "auto"\ndark_library = "{lib}"\n'
+            'camera = "zwo-asi294mc-pro"\n')
+    (work / "darkroom.toml").write_text(base)
+    assert run_stack(work) == 0
+    return work, base, lib
+
+
+def test_run_keeps_the_stack_while_the_library_or_subs_are_unplugged(tmp_path, data, auto_dark, fake_siril,
+                                                                      capsys):
+    work, base, lib = auto_dark
+    n = len(fake_siril.scripts)
+    capsys.readouterr()
+    lib.rename(tmp_path / "lib-away")
+    assert run_stack(work) == 0
+    out = capsys.readouterr().out
+    assert "stack: kept as it is; the dark library" in out and len(fake_siril.scripts) == n
+    (tmp_path / "lib-away").rename(lib)
+    data["subs"].rename(tmp_path / "subs-away")
+    assert run_stack(work) == 0
+    assert "kept as it is; the subs folder" in capsys.readouterr().out
+    assert cli.main(["run", "--work", str(work), "--to", "stack", "--force"]) == 1     # forced: nothing kept
+
+
+def test_run_does_not_keep_the_stack_when_a_new_setting_fails(tmp_path, data, auto_dark, capsys):
+    work, base, lib = auto_dark
+    cfg = work / "darkroom.toml"
+    wrong = frames(tmp_path / "wrongflats", "Flat", 2, shape=(6, 4), EXPTIME=0.07)
+    cfg.write_text(base + f'flats = "{wrong}"\n')
+    capsys.readouterr()
+    assert run_stack(work) == 1                              # the flats do not fit the lights
+    out, err = capsys.readouterr()
+    assert "kept" not in out and "4x6 pixels and the lights 6x4" in err
+    lib.rename(tmp_path / "lib-away")                       # unplugged too: still not kept
+    assert run_stack(work) == 1
+    assert "kept" not in capsys.readouterr().out
+    (tmp_path / "lib-away").rename(lib)
+    cfg.write_text(base.replace('dark = "auto"', f'dark = "{tmp_path / "typo" / "dark.fit"}"'))
+    assert run_stack(work) == 1                              # a mistyped path is an error, not "unplugged"
+    out, err = capsys.readouterr()
+    assert "kept" not in out and "darks not found" in err
+    data["subs"].rename(tmp_path / "subs-away")              # subs unplugged and the dark changed
+    other = frames(tmp_path / "other", "Dark", 1, FILTER=None)
+    cfg.write_text(base.replace('dark = "auto"', f'dark = "{other / "Dark_0001.fit"}"'))
+    assert run_stack(work) == 1
+
+
+def test_unchanged_folder_settings_with_unplugged_frames_are_kept(tmp_path, data, fake_siril):
+    work = tmp_path / "w"
+    work.mkdir()
+    (work / "darkroom.toml").write_text(f'[target]\nsubs = "{data["subs"]}"\ndark = "{data["darks"]}"\n'
+                                        f'flats = "{data["flats"]}"\nbias = "{data["biases"]}"\n')
+    s = config.resolve(work)
+    rec = stages.result_params("stack", cli._stack_table(s, work))
+    data["darks"].rename(tmp_path / "away")
+    data["subs"].rename(tmp_path / "subs-away")
+    gone = cli._unavailable_but_unchanged(s, work, rec)
+    assert "the subs folder" in gone and "the darks" in gone
+    assert cli._unavailable_but_unchanged(s, work, rec | {"keep_fwhm": 80.0}) is None
+    assert cli._unavailable_but_unchanged(s, work, {k: v for k, v in rec.items() if k != "flats"}) is None
+    assert cli._unavailable_but_unchanged(s, work, None) is None
+
+
+# --- a dark picked from the library is checked like one given by name
+
+def test_a_picked_dark_is_checked_against_the_lights(tmp_path, data, fake_siril, monkeypatch, capsys):
+    lib = tmp_path / "lib"
+    good = frames(lib / "good", "MasterDark", 1, FILTER=None, CCD_TEMP=5.0)
+    frames(lib / "other", "Binned", 1, shape=(2, 3), FILTER=None, CCD_TEMP=-0.3)      # nearer, wrong size
+    work = tmp_path / "w"
+    work.mkdir()
+    (work / "darkroom.toml").write_text(f'[target]\nsubs = "{data["subs"]}"\ndark = "auto"\n'
+                                        f'dark_library = "{lib}"\ncamera = "zwo-asi294mc-pro"\n'
+                                        f'bias = "{data["biases"]}"\n')
+    s = config.resolve(work)
+    table = cli._stack_table(s, work)
+    out = capsys.readouterr().out
+    assert table["dark"] == (good / "MasterDark_0001.fit").resolve() and table["bias"] is None
+    assert "skipped 1 300 s master dark(s)" in out and "3x2 pixels, the lights 6x4" in out
+    # the bias is not used with a dark and no raw flats: no master bias is built for nothing
+    assert not fake_siril.scripts and "bias: not used" in out
+    assert not (work / "masters" / "master_bias.fit").exists()
+    # whatever the library gives is checked for size and Bayer pattern too
+    odd = frames(tmp_path / "odd", "MasterDark", 1, FILTER=None, BAYERPAT="GBRG")
+    monkeypatch.setattr(darks, "select_dark", lambda *a, **k: odd / "MasterDark_0001.fit")
+    with pytest.raises(tools.StageError, match="Bayer pattern GBRG and the lights RGGB"):
+        cli._stack_table(s, work)
+
+
+def test_select_dark_skips_darks_that_do_not_fit(tmp_path, data):
+    lib = tmp_path / "lib"
+    frames(lib, "MasterDark", 1, FILTER=None, BAYERPAT="GBRG")
+    msgs = []
+    with pytest.raises(tools.StageError, match="no usable master dark.*Bayer pattern GBRG, the lights RGGB"):
+        darks.select_dark(lib, {"glob": "*.fit", "filename": ".*"}, 300.0, 120.0, 0.0, log=msgs.append,
+                          lights=lights(data))
+    # without the lights' survey nothing is skipped (as before)
+    assert darks.select_dark(lib, {"glob": "*.fit", "filename": ".*"}, 300.0, 120.0, 0.0, log=msgs.append)
+
+
+# --- .fit, .fits and .fts subs
+
+def test_fits_extensions_in_any_case(tmp_path, data, capsys):
+    subs = tmp_path / "subs"
+    subs.mkdir()
+    for i, ext in enumerate((".fits", ".FTS", ".Fit")):
+        (data["subs"] / f"Light_{i + 1:04d}.fit").rename(subs / f"Light_{i + 1:04d}{ext}")
+    (subs / "Light_0004.jpg").write_bytes(b"preview")
+    (subs / ".Light_0005.fits").write_bytes(b"hidden")
+    assert [p.name for p in darks.list_subs(subs, "Light_*.fit")] == ["Light_0001.fits", "Light_0002.FTS",
+                                                                     "Light_0003.Fit"]
+    assert len(darks.list_subs(subs)) == 3 and darks.list_subs(subs, "Other_*.fit") == []
+    assert darks.matches("light_1.FIT", "Light_*.fit") and not darks.matches("Light_1.jpg", "Light_*.fit")
+    assert darks.matches("a.xisf", "*.xisf") and not darks.matches("a.fit", "*.xisf")
+    work = tmp_path / "w"
+    assert cli.main(["init", "--work", str(work), "--subs", str(subs), "--no-dark"]) == 0
+    assert "3 frames matching Light_*.fit" in capsys.readouterr().out
+    assert cli._lights_survey(subs, "*.fit").count == 3
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    with pytest.raises(tools.StageError, match=r"no FITS files \(\*.fit, \*.fits, \*.fts\)"):
+        cli._lights_survey(empty, "*.fit")
+    assert cli.main(["init", "--work", str(tmp_path / "w2"), "--subs", str(empty), "--no-dark"]) == 1
+    assert "no FITS files" in capsys.readouterr().err
+
+
+# --- init with a camera or look .toml given by a relative path
+
+def test_init_stores_preset_paths_that_resolve(tmp_path, data, monkeypatch, capsys):
+    here = tmp_path / "presets-here"
+    here.mkdir()
+    (here / "mycam.toml").write_text((config.presets_dir() / "cameras" / "zwo-asi294mc-pro.toml").read_text())
+    (here / "mylook.toml").write_text('[stretch]\nasinh = 40\n')
+    monkeypatch.chdir(here)
+    work = tmp_path / "w"
+    assert cli.main(["init", "--work", str(work), "--subs", str(data["subs"]), "--no-dark",
+                     "--camera", "mycam.toml", "--look", "./mylook.toml"]) == 0
+    monkeypatch.chdir(tmp_path)
+    s = config.resolve(work)
+    assert s["target"]["camera"] == str(here / "mycam.toml") and s["target"]["look"] == str(here / "mylook.toml")
+    assert s["stretch"]["asinh"] == 40 and s["color"]["sensor"] == "Sony IMX294"
+    assert cli._preset_arg("galaxy") == "galaxy"
+
+
+# --- headers: dates, EXPOSURE, gain
+
+def test_flat_dates_that_are_not_iso(tmp_path, data, fake_siril):
+    lt = lights(data)
+    flats_sv = darks.Survey(dates=["14/12/2025"])
+    assert calib.check("flats", lt, flats_sv) == ([], [])          # same day, written dd/mm/yyyy
+    far = calib.check("flats", lt, darks.Survey(dates=["2025/12/20"]))[1]
+    assert any("6 days from the lights" in w for w in far)
+    err, warn = calib.check("flats", lt, darks.Survey(dates=["Sunday"]))
+    assert not err and any("cannot read the date DATE-OBS = 'Sunday'" in w for w in warn)
+    assert calib._day("2025-12-14T13:09:58") == calib._day("14/12/2025")
+    odd = frames(tmp_path / "odd", "Flat", 2, EXPTIME=0.07, DATE_OBS="last night")
+    msgs = []
+    calib.prepare(tmp_path / "w", lt, flats=odd, log=msgs.append)  # no ValueError from the date
+    assert any("cannot read the date" in m for m in msgs)
+
+
+def test_exposure_keyword_is_a_fallback_for_exptime(tmp_path):
+    subs = frames(tmp_path / "subs", "Light", 3, EXPTIME=None, EXPOSURE=120.0)
+    sv = darks.survey(darks.list_subs(subs))
+    assert sv.exposures == [120.0]
+    d = frames(tmp_path / "lib", "MasterDark", 1, EXPTIME=None, EXPOSURE=120.0)
+    assert darks.read_dark(d / "MasterDark_0001.fit", ".*").exposure == 120.0
+
+
+def test_gain_matching_that_is_skipped_is_said(tmp_path, data):
+    lib = frames(tmp_path / "lib", "MasterDark", 1, FILTER=None)
+    meta = {"glob": "*.fit", "filename": ".*"}
+    mixed = darks.Survey(gains=[100.0, 120.0], sizes=[(6, 4)])
+    msgs = []
+    darks.select_dark(lib, meta, 300.0, None, 0.0, log=msgs.append, lights=mixed)
+    assert any("gain not matched: the subs were taken at more than one gain (100, 120)" in m for m in msgs)
+    msgs.clear()
+    darks.select_dark(lib, meta, 300.0, None, 0.0, log=msgs.append, lights=darks.Survey())
+    assert any("gain not matched: the subs do not record their GAIN" in m for m in msgs)
+    with pytest.raises(tools.StageError, match="EXPTIME or EXPOSURE"):
+        darks.select_dark(lib, meta, None, None, 0.0)

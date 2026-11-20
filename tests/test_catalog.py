@@ -1,4 +1,9 @@
 """Catalogue fallback: log parsing, query construction, CSV validation (no network)."""
+import http.client
+import urllib.error
+import urllib.parse
+from pathlib import Path
+
 import pytest
 
 from darkroom import catalog, stages, tools
@@ -189,3 +194,97 @@ def test_color_explains_an_spcc_server_failure(monkeypatch, tmp_path):
     (tmp_path / stages.BGE).write_bytes(b"bge")
     with pytest.raises(tools.StageError, match="(?s)star spectra.*HTTP 429.*Wait"):
         stages.color(tmp_path)
+
+
+# --- fetch: retries, cut-off answers and the archive's row limit (urlopen faked)
+
+class Answer:
+    def __init__(self, body=None, error=None):
+        self.body, self.error = body, error
+
+    def read(self):
+        if self.error:
+            raise self.error
+        return self.body.encode()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def fake_archive(monkeypatch, answers):
+    """urlopen gives the answers in turn: a CSV text, or an exception raised by urlopen or read."""
+    seen = []
+
+    def urlopen(req, timeout, context):
+        seen.append(dict(urllib.parse.parse_qsl(req.data.decode())))
+        a = answers[len(seen) - 1]
+        if isinstance(a, Exception) and not isinstance(a, http.client.IncompleteRead):
+            raise a
+        return Answer(error=a) if isinstance(a, Exception) else Answer(a)
+    monkeypatch.setattr(catalog.urllib.request, "urlopen", urlopen)
+    return seen
+
+
+def test_fetch_retries_a_cut_off_or_dropped_answer(monkeypatch, capsys):
+    cut = http.client.IncompleteRead(b"ra,dec", 1000)
+    seen = fake_archive(monkeypatch, [cut, ConnectionResetError(54, "Connection reset by peer"), CSV])
+    sleeps = []
+    assert catalog.fetch(11.0, 41.0, 2.0, 13.1, sleep=sleeps.append) == CSV
+    assert len(seen) == 3 and sleeps == [catalog.BACKOFF, 2 * catalog.BACKOFF]
+    assert seen[0]["MAXREC"] == str(catalog.MAX_ROWS + 1)
+    assert "trying again" in capsys.readouterr().out
+
+
+def test_fetch_gives_up_with_a_stage_error(monkeypatch):
+    fake_archive(monkeypatch, [http.client.IncompleteRead(b"", 10)] * 3)
+    with pytest.raises(tools.StageError, match="IncompleteRead"):
+        catalog.fetch(11.0, 41.0, 2.0, 13.1, sleep=lambda s: None)
+    bad_query = urllib.error.HTTPError(catalog.TAP_URL, 400, "Bad Request", {}, None)
+    seen = fake_archive(monkeypatch, [bad_query, CSV])
+    with pytest.raises(tools.StageError, match="400"):
+        catalog.fetch(11.0, 41.0, 2.0, 13.1, sleep=lambda s: None)
+    assert len(seen) == 1                                   # a client error is not tried again
+    busy = urllib.error.HTTPError(catalog.TAP_URL, 503, "Busy", {}, None)
+    fake_archive(monkeypatch, [busy, CSV])
+    assert catalog.fetch(11.0, 41.0, 2.0, 13.1, sleep=lambda s: None) == CSV
+
+
+def rows(n):
+    return catalog.HEADER + "\n" + "".join(f"{10 + i * 1e-5:.6f},41.0,,,12.0,,\n" for i in range(n))
+
+
+def test_fetch_refuses_an_answer_cut_at_the_row_limit(monkeypatch):
+    fake_archive(monkeypatch, [rows(catalog.SERVER_ROW_LIMIT)])
+    with pytest.raises(tools.StageError, match="cut off at 50000 stars"):
+        catalog.fetch(98.0, 5.0, 8.0, 13.0)
+    fake_archive(monkeypatch, [rows(11)])
+    with pytest.raises(tools.StageError, match="cut off"):
+        catalog.fetch(98.0, 5.0, 8.0, 13.0, max_rows=10)
+    fake_archive(monkeypatch, [rows(10)])
+    assert catalog.validate_csv(catalog.fetch(98.0, 5.0, 8.0, 13.0, max_rows=10)) == 10
+
+
+def test_mosaic_prefill_gets_a_stage_error_for_a_cut_off_answer(monkeypatch, tmp_path):
+    from darkroom import mosaic
+    from astropy.io import fits
+    import numpy as np
+    files = []
+    for i in range(2):
+        h = fits.Header()
+        h["RA"], h["DEC"] = 98.0 + i, 5.0
+        p = tmp_path / f"Light_{i}.fit"
+        fits.PrimaryHDU(np.zeros((8, 8), np.uint16), header=h).writeto(p)
+        files.append(p)
+    fake_archive(monkeypatch, [http.client.IncompleteRead(b"", 10)] * 3)
+    monkeypatch.setattr(catalog.time, "sleep", lambda s: None)
+    with pytest.raises(tools.StageError):           # what the stack stage catches to fall back
+        mosaic.prefill(files, 150, 2.9, cache=tmp_path / "cache", log=lambda m: None)
+
+
+def test_write_atomic_leaves_no_temp_file(tmp_path):
+    catalog.write_atomic(tmp_path / "a" / "x.csv", CSV)
+    catalog.write_atomic(tmp_path / "a" / "x.csv", CSV)
+    assert [p.name for p in (tmp_path / "a").iterdir()] == ["x.csv"]

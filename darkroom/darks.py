@@ -6,6 +6,8 @@ telescope/device name are deliberately not among them.
 """
 from __future__ import annotations
 
+import fnmatch
+import os
 import re
 import statistics
 from dataclasses import dataclass, field
@@ -13,10 +15,11 @@ from pathlib import Path
 
 from . import tools
 
-_KEYS = ("OBJECT", "EXPTIME", "CCD-TEMP", "GAIN", "OFFSET", "FILTER", "FOCALLEN", "XPIXSZ", "BAYERPAT",
-         "NAXIS1", "NAXIS2", "DATE-OBS")
+_KEYS = ("OBJECT", "EXPTIME", "EXPOSURE", "CCD-TEMP", "GAIN", "OFFSET", "FILTER", "FOCALLEN", "XPIXSZ",
+         "BAYERPAT", "NAXIS1", "NAXIS2", "DATE-OBS")
 MAX_SAMPLE = 500            # headers read per survey (evenly spaced over the night)
 WARN_TEMP_DIFF = 5.0        # deg C
+FITS_EXTENSIONS = (".fit", ".fits", ".fts")     # in any case: the files calib.FRAME_GLOBS finds
 
 
 def _header(path: Path) -> dict:
@@ -40,6 +43,17 @@ def _text(v):
 
 def _fmt(x) -> str:
     return format(float(x), "g")
+
+
+def exposure_of(h: dict) -> float | None:
+    """EXPTIME, else EXPOSURE (the older keyword some capture programs still write)."""
+    v = _num(h.get("EXPTIME"))
+    return v if v is not None else _num(h.get("EXPOSURE"))
+
+
+def _size_of(h: dict) -> tuple[int, int] | None:
+    w, hh = _num(h.get("NAXIS1")), _num(h.get("NAXIS2"))
+    return (int(w), int(hh)) if w is not None and hh is not None else None
 
 
 @dataclass
@@ -82,8 +96,28 @@ class Survey:
         return self.count * self.exposure if self.exposure is not None else None
 
 
+def is_fits(name) -> bool:
+    return os.path.splitext(str(name))[1].lower() in FITS_EXTENSIONS
+
+
+def matches(name: str, glob: str) -> bool:
+    """Whether a file name matches a sub glob such as ``Light_*.fit``, ignoring case. A glob
+    that ends in a FITS extension matches every FITS extension (.fit, .fits, .fts), so
+    ``*.fit`` means every FITS file."""
+    base, ext = os.path.splitext(glob)
+    if ext.lower() in FITS_EXTENSIONS:
+        stem, own = os.path.splitext(name)
+        return own.lower() in FITS_EXTENSIONS and fnmatch.fnmatchcase(stem.lower(), base.lower())
+    return fnmatch.fnmatchcase(name.lower(), glob.lower())
+
+
 def list_subs(subs: Path, glob: str = "*.fit") -> list[Path]:
-    return sorted(p for p in Path(subs).glob(glob) if p.is_file() and not p.name.startswith("."))
+    """The files directly inside ``subs`` that match ``glob`` (see ``matches``); no hidden files."""
+    try:
+        entries = list(Path(subs).iterdir())
+    except OSError:
+        return []
+    return sorted(p for p in entries if not p.name.startswith(".") and matches(p.name, glob) and p.is_file())
 
 
 def survey(files: list[Path]) -> Survey:
@@ -99,7 +133,7 @@ def survey(files: list[Path]) -> Survey:
     heads = [{k: h.get(k) for k in _KEYS} for h in map(_header, sample)]
     s.sampled = len(heads)
     s.object = _text(heads[0]["OBJECT"])
-    s.exposures = sorted({v for v in (_num(h["EXPTIME"]) for h in heads) if v is not None})
+    s.exposures = sorted({v for v in map(exposure_of, heads) if v is not None})
     s.gains = sorted({v for v in (_num(h["GAIN"]) for h in heads) if v is not None})
     s.filters = sorted({v for v in (_text(h["FILTER"]) for h in heads) if v})
     temps = [v for v in (_num(h["CCD-TEMP"]) for h in heads) if v is not None]
@@ -109,8 +143,7 @@ def survey(files: list[Path]) -> Survey:
     s.pixel = _num(heads[0]["XPIXSZ"])
     s.bayer = _text(heads[0]["BAYERPAT"])
     s.offsets = sorted({v for v in (_num(h["OFFSET"]) for h in heads) if v is not None})
-    s.sizes = sorted({(int(h["NAXIS1"]), int(h["NAXIS2"])) for h in heads
-                      if _num(h["NAXIS1"]) is not None and _num(h["NAXIS2"]) is not None})
+    s.sizes = sorted({sz for sz in map(_size_of, heads) if sz is not None})
     s.dates = sorted({d[:10] for d in (_text(h["DATE-OBS"]) for h in heads) if d})
     return s
 
@@ -142,17 +175,28 @@ class Dark:
     temp: float | None
     gain: float | None
     stamp: str                  # sortable; newest wins a tie
+    size: tuple[int, int] | None = None
+    bayer: str | None = None
+
+
+def filename_pattern(filename_re: str) -> re.Pattern:
+    """The compiled [darks] filename regex; StageError (not re.error) when it is not valid."""
+    try:
+        return re.compile(filename_re)
+    except re.error as e:
+        raise tools.StageError(f"[darks] filename of the camera preset is not a valid regular expression "
+                               f"({e}): {filename_re!r}") from None
 
 
 def read_dark(path: Path, filename_re: str) -> Dark:
     """Exposure, temperature and gain from the header, falling back to the file name."""
-    m = re.fullmatch(filename_re, path.name)
+    m = filename_pattern(filename_re).fullmatch(path.name)
     name = m.groupdict() if m else {}
     try:
         h = _header(path)
     except tools.StageError:
         h = {}
-    exposure = _num(h.get("EXPTIME"))
+    exposure = exposure_of(h)
     temp = _num(h.get("CCD-TEMP"))
     if exposure is None:
         exposure = _num(name.get("exposure"))
@@ -162,22 +206,40 @@ def read_dark(path: Path, filename_re: str) -> Dark:
     if not stamp:
         date = _text(h.get("DATE-OBS"))
         stamp = re.sub(r"[-:T]", "", date)[:14] if date else ""
-    return Dark(path, exposure, temp, _num(h.get("GAIN")), stamp)
+    return Dark(path, exposure, temp, _num(h.get("GAIN")), stamp, _size_of(h), _text(h.get("BAYERPAT")))
 
 
 def scan_library(library: Path, meta: dict) -> list[Dark]:
     library = Path(library)
     if not library.is_dir():
         raise tools.StageError(f"dark library not found: {library} (is the drive connected?)")
-    files = sorted(p for p in library.rglob(meta["glob"]) if p.is_file() and not p.name.startswith("."))
+    filename_pattern(meta["filename"])
+    files = sorted(p for p in library.rglob("*")
+                   if not p.name.startswith(".") and matches(p.name, meta["glob"]) and p.is_file())
     return [read_dark(p, meta["filename"]) for p in files]
 
 
+def _size_text(size) -> str:
+    return f"{size[0]}x{size[1]}"
+
+
+def _misfit(d: Dark, lights: Survey) -> str | None:
+    """Why the dark cannot calibrate these lights (size or Bayer pattern), or None."""
+    if lights.size and d.size and d.size != lights.size:
+        return (f"{_size_text(d.size)} pixels, the lights {_size_text(lights.size)} (another camera, binning "
+                "or region of interest)")
+    if lights.bayer and d.bayer and d.bayer != lights.bayer:
+        return f"Bayer pattern {d.bayer}, the lights {lights.bayer}"
+    return None
+
+
 def select_dark(library: Path, meta: dict, exposure: float | None, gain: float | None,
-                temp: float | None, log=print) -> Path:
-    """Pick the master dark for subs of the given exposure, gain and median temperature."""
+                temp: float | None, log=print, lights: Survey | None = None) -> Path:
+    """Pick the master dark for subs of the given exposure, gain and median temperature.
+    With ``lights`` (the subs' survey), darks of another size or Bayer pattern are skipped."""
     if exposure is None:
-        raise tools.StageError("cannot pick a dark automatically: the subs do not have one common EXPTIME")
+        raise tools.StageError("cannot pick a dark automatically: the subs do not have one common exposure "
+                               "time (EXPTIME or EXPOSURE)")
     darks = scan_library(library, meta)
     if not darks:
         raise tools.StageError(f"no master darks matching {meta['glob']} in {library}")
@@ -186,6 +248,16 @@ def select_dark(library: Path, meta: dict, exposure: float | None, gain: float |
         have = sorted({d.exposure for d in darks if d.exposure is not None})
         raise tools.StageError(f"no master dark with the subs' exposure ({_fmt(exposure)} s) in {library}; "
                                "exposures available: " + (", ".join(f"{_fmt(e)} s" for e in have) or "none"))
+    if lights is not None:
+        misfits = [(d, why) for d in same if (why := _misfit(d, lights))]
+        if misfits:
+            same = [d for d in same if not _misfit(d, lights)]
+            d, why = misfits[0]
+            msg = (f"{len(misfits)} {_fmt(exposure)} s master dark(s) in {library} do not fit the lights "
+                   f"(e.g. {d.path.name}: {why})")
+            if not same:
+                raise tools.StageError(f"no usable master dark: {msg}")
+            log(f"dark: skipped {msg}")
     if gain is not None and any(d.gain is not None for d in same):
         ok = [d for d in same if d.gain is None or abs(d.gain - gain) < 0.01]
         if not ok:
@@ -193,6 +265,10 @@ def select_dark(library: Path, meta: dict, exposure: float | None, gain: float |
             raise tools.StageError(f"no {_fmt(exposure)} s master dark at the subs' gain ({_fmt(gain)}) in "
                                    f"{library}; gains available: " + ", ".join(_fmt(g) for g in have))
         same = ok
+    elif gain is None and any(d.gain is not None for d in same):
+        why = (f"the subs were taken at more than one gain ({', '.join(map(_fmt, lights.gains))})"
+               if lights is not None and len(lights.gains) > 1 else "the subs do not record their GAIN")
+        log(f"dark: gain not matched: {why}")
     if temp is None:
         best = max(same, key=lambda d: d.stamp)
         log(f"dark: {best.path} (newest of {len(same)}; the subs have no CCD-TEMP to match)")

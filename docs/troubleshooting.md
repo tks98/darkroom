@@ -88,3 +88,7 @@ siril-cli saves its settings when a script ends, so the `set16bits`, `set32bits`
 ## The shell splits paths with spaces
 
 The Seestar names its folders with spaces (`M 31_sub`). Quote paths in the shell. In zsh, an unquoted variable holding several arguments is passed as one argument, so write the arguments out.
+
+## An unexpected error with a one-line message
+
+darkroom reports an unexpected error (a folder it cannot write to, a value it cannot parse) as one line and exits with code 1. Set `DARKROOM_DEBUG=1` to see the Python traceback instead, for a bug report.

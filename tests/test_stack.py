@@ -26,7 +26,7 @@ def test_select_subs_matches_the_glob_and_falls_back_to_every_fits_file(tmp_path
     every = ["Flat_1.fit", "Light_1.fit", "Light_2.FIT", "Light_3.fits", "Light_4.fts"]
     assert [p.name for p in stages.fits_files(tmp_path)] == every
     files, matched = stages.select_subs(tmp_path, "Light_*.fit")
-    assert matched and [p.name for p in files] == ["Light_1.fit"]
+    assert matched and [p.name for p in files] == every[1:]        # .fit in a glob: any FITS extension
     files, matched = stages.select_subs(tmp_path, "Light_*")
     assert matched and [p.name for p in files] == every[1:]        # FITS only, not the jpg
     files, matched = stages.select_subs(tmp_path, "Dark_*.fit")
@@ -65,7 +65,7 @@ def test_stack_takes_fits_and_fts_subs(tmp_path, monkeypatch, capsys):
     subs.mkdir()
     for n in ("Light_1.fits", "Light_2.FTS", "Light_3.fit"):
         touch(subs / n)
-    stages.stack(work, subs, None, sub_glob="Light_*.fit")             # only Light_3 matches
+    stages.stack(work, subs, None, sub_glob="Light_*3.fit")            # only Light_3 matches
     staged = work.resolve() / "process" / "subs"
     assert sorted(p.name for p in staged.iterdir()) == ["Light_3.fit"]
     stages.stack(work, subs, None, sub_glob="Seestar_*.fit", force=True)  # none match: every FITS file
@@ -232,9 +232,7 @@ def test_run_keeps_a_stack_whose_calibration_cannot_be_checked(fake, monkeypatch
     names(ran)
     assert "subs_digest" in stages.recorded_params(work, "stack")
 
-    def unplugged(s, w=None):
-        raise stages.tools.StageError("dark library not found (is the drive connected?)")
-    monkeypatch.setattr(cli, "_stack_table", unplugged)
+    (work.parent / "dark.fit").unlink()             # the drive with the dark is unplugged
     capsys.readouterr()
     assert run(work) == 0 and names(ran) == []
     assert "-- stack: kept as it is" in capsys.readouterr().out

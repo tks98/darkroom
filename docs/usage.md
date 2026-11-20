@@ -73,6 +73,8 @@ A stack that has to run while `<work>/process` still holds the frames of the las
 
 The stages are `stack`, `bge`, `color`, `denoise`, `stretch`, `starnet` and `finish`. [How it works](pipeline.md) describes each one.
 
+`run` keeps an existing stack when its subs folder, dark library or calibration frames are not available (a drive is unplugged) and the settings are the ones it was made with. A changed calibration setting that cannot be applied (a mistyped path, frames of another size) fails the run.
+
 ## Running one stage
 
 Every stage is also a command of its own. Flags override the config file, which is handy for trying something without editing it:
