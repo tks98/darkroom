@@ -8,19 +8,25 @@ version = "0.1.0"
 description = "Astrophotography editing from the command line, built on Siril, GraXpert and StarNet. Use it directly or through an agent."
 readme = "README.md"
 requires-python = ">=3.11"
+# Lower bounds: the oldest releases with wheels for Python 3.11 that the test suite passes with.
 dependencies = [
-    "numpy",
-    "scipy",
-    "astropy",
-    "tifffile",
-    "imagecodecs",          # StarNet2 writes LZW-compressed TIFF
-    "pillow",
-    "onnx",
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "astropy>=6.0",
+    "tifffile>=2023.7.10",
+    "imagecodecs>=2023.9.18",   # StarNet2 writes LZW-compressed TIFF
+    "pillow>=10.1",
+    "onnx>=1.15",               # used by onnxruntime's make_dynamic_shape_fixed (the fixed-batch denoise model)
+    # Exact on purpose: the denoise stage on the Apple GPU (CoreML) was verified with 1.32,
+    # which runs the whole network on the GPU (GraXpert's bundled onnxruntime splits it into
+    # over a hundred pieces; see docs/troubleshooting.md), and the M31 reference result was
+    # made with it. `darkroom doctor` warns when another version is installed. Change it only
+    # after rerunning doctor's GPU check and an M31 denoise.
     "onnxruntime==1.32.0",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["pytest>=8"]
 
 [project.scripts]
 darkroom = "darkroom.cli:main"

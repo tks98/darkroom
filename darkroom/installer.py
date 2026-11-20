@@ -25,7 +25,6 @@ import json
 import os
 import plistlib
 import shutil
-import stat
 import struct
 import subprocess
 import sys
@@ -34,13 +33,12 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-import zipfile
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from . import __version__, doctor, starnet, tools, toolset
+from . import __version__, archive, doctor, starnet, tools, toolset
 from .toolset import Build
 
 USER_AGENT = "darkroom"
@@ -115,6 +113,17 @@ def allowed_redirects(url: str) -> set[str]:
     return GITHUB_REDIRECT_HOSTS if urllib.parse.urlsplit(url).hostname == GITHUB_HOST else set()
 
 
+class RedirectRefused(urllib.error.HTTPError):
+    """A redirect to a host outside the allow-list; its message names the host."""
+
+
+def redirect_refused_message(scheme: str, host: str | None, allowed: set[str]) -> str:
+    hosts = (f"follows redirects only to {', '.join(sorted(allowed))}" if allowed
+             else "follows no redirects for this download")
+    return (f"redirected to {scheme}://{host}; refused (darkroom {hosts}). If the download site has moved "
+            "its files to that host, darkroom needs an update; please report it")
+
+
 class _Redirects(urllib.request.HTTPRedirectHandler):
     def __init__(self, allowed: set[str]):
         super().__init__()
@@ -123,8 +132,8 @@ class _Redirects(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         u = urllib.parse.urlsplit(newurl)
         if u.scheme != "https" or u.hostname not in self.allowed:
-            raise urllib.error.HTTPError(newurl, code, f"redirect to {u.scheme}://{u.hostname} refused",
-                                         headers, fp)
+            why = "the server " + redirect_refused_message(u.scheme, u.hostname, self.allowed)
+            raise RedirectRefused(newurl, code, why, headers, fp)
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
@@ -138,6 +147,8 @@ def http_open(url: str, timeout: float = TIMEOUT):
 
 
 def _short(e: BaseException) -> str:
+    if isinstance(e, RedirectRefused):
+        return str(e.reason)
     if isinstance(e, urllib.error.HTTPError):
         return f"HTTP {e.code}"
     if isinstance(e, urllib.error.URLError):
@@ -156,7 +167,8 @@ def download(b: Build, dest: Path, opener: Callable | None = None, log=print) ->
             final = r.geturl() if hasattr(r, "geturl") else b.url
             fu = urllib.parse.urlsplit(final)
             if fu.scheme != "https" or fu.hostname not in allowed:
-                raise tools.StageError(f"the download was redirected to {fu.scheme}://{fu.hostname}; refused")
+                raise tools.StageError(f"the download of {b.filename} was "
+                                       + redirect_refused_message(fu.scheme, fu.hostname, allowed_redirects(b.url)))
             cl = r.headers.get("Content-Length")
             expected = int(cl) if cl and cl.strip().isdigit() else None
             if expected is not None and expected != b.size:
@@ -243,9 +255,7 @@ def mounted(ctx: Ctx, dmg: Path):
             pass
 
 
-def quarantine_stamp(now: float | None = None) -> str:
-    """The value a browser writes: flags 0081 (downloaded; not approved), time in hex, agent name."""
-    return f"0081;{int(time.time() if now is None else now):08x};darkroom;"
+quarantine_stamp = toolset.quarantine_stamp
 
 
 def bundle_version(app: Path) -> str | None:
@@ -329,40 +339,10 @@ def stage_appimage(ctx: Ctx, b: Build, appimage: Path, stage: Path, scratch: Pat
     return {"extracted_with": method}
 
 
-def _safe(name: str) -> bool:
-    p = Path(name)
-    return bool(name) and not name.startswith(("/", "\\")) and ".." not in p.parts and ":" not in p.parts[0]
-
-
 def unzip(zip_path: Path, into: Path) -> None:
-    """Unpack a zip keeping executable bits and in-tree symlinks; refuse unsafe paths."""
-    try:
-        z = zipfile.ZipFile(zip_path)
-    except (zipfile.BadZipFile, OSError) as e:
-        raise tools.StageError(f"{zip_path.name} is not a readable zip: {e}") from None
-    with z:
-        infos = [i for i in z.infolist() if not i.filename.startswith("__MACOSX/")]
-        for i in infos:
-            if not _safe(i.filename):
-                raise tools.StageError(f"{zip_path.name} contains an unsafe path: {i.filename!r}")
-        into.mkdir(parents=True, exist_ok=True)
-        for i in infos:
-            target = into / i.filename
-            mode = i.external_attr >> 16
-            if i.is_dir():
-                target.mkdir(parents=True, exist_ok=True)
-                continue
-            target.parent.mkdir(parents=True, exist_ok=True)
-            if stat.S_ISLNK(mode):
-                link = z.read(i).decode()
-                rel = os.path.normpath(os.path.join(os.path.dirname(i.filename), link))
-                if os.path.isabs(link) or rel.startswith(".."):
-                    raise tools.StageError(f"{zip_path.name} has a symlink pointing outside it: {i.filename}")
-                os.symlink(link, target)
-                continue
-            with z.open(i) as src, open(target, "wb") as dst:
-                shutil.copyfileobj(src, dst, CHUNK)
-            os.chmod(target, 0o755 if mode & 0o111 else 0o644)
+    """Unpack a zip keeping executable bits and in-tree symlinks; refuse anything that would write
+    or point outside ``into`` (see darkroom.archive)."""
+    archive.extract(zip_path, into)
 
 
 def stage_zip(ctx: Ctx, b: Build, zip_path: Path, stage: Path) -> dict:
@@ -573,7 +553,8 @@ def offer_starnet(ctx: Ctx, starnet_dir: str | None, get_starnet_run: Callable |
         return
     from . import get_starnet
     # get-starnet shows the licence and asks for acceptance itself; acceptance is never passed on
-    ns = argparse.Namespace(list=False, zip=None, dry_run=False, force=False, accept_license=False)
+    ns = argparse.Namespace(list=False, zip=None, dry_run=False, force=False, accept_license=False,
+                            allow_unpinned=False)
     try:
         (get_starnet_run or get_starnet.run)(ns, interactive=True, ask=ctx.ask, out=ctx.out)
     except tools.StageError as e:

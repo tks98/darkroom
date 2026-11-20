@@ -7,11 +7,13 @@ set -euo pipefail
 
 usage() {
     cat <<'USAGE'
-usage: ./setup.sh [--skill-dir DIR]... [--no-skill] [--no-tools] [--starnet-dir DIR] [--offline]
+usage: ./setup.sh [--skill-dir DIR]... [--no-skill] [--replace-skill] [--no-tools] [--starnet-dir DIR] [--offline]
 
   --skill-dir DIR     link skill/ as DIR/darkroom: the skills folder of your agent
                       (repeatable; default: ~/.claude/skills)
   --no-skill          do not link the skill anywhere
+  --replace-skill     if DIR/darkroom already links to another darkroom checkout, point it
+                      at this one (without this flag such a link is left alone)
   --no-tools          do not run `darkroom setup` (no Siril/GraXpert install, no
                       denoise model download, no StarNet2 offer); only run `darkroom doctor`
   --starnet-dir DIR   passed to `darkroom setup` / `darkroom doctor` (else $DARKROOM_STARNET_DIR)
@@ -21,12 +23,14 @@ USAGE
 }
 
 skill=1
+replace_skill=0
 tools=1
 skill_dirs=()
 doctor_args=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --no-skill) skill=0 ;;
+        --replace-skill) replace_skill=1 ;;
         --no-tools) tools=0 ;;
         --skill-dir)
             [ $# -ge 2 ] || { echo "setup: --skill-dir needs a directory" >&2; exit 2; }
@@ -43,7 +47,7 @@ while [ $# -gt 0 ]; do
     shift
 done
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")" || exit 1
 repo="$(pwd -P)"
 
 # 1. virtual environment (Python >= 3.11)
@@ -79,13 +83,15 @@ echo "== denoise model"
 .venv/bin/python - <<'PY'
 import tempfile
 from pathlib import Path
-from darkroom import denoise, tools
+from darkroom import denoise, models, tools
 
 src = tools.graxpert_model()
-if not src.is_file():
-    print(f"   GraXpert denoise model not found at {src}; skipping (darkroom doctor explains the fix)")
+problem = models.denoise_model_problem(src)
+if problem:
+    print(f"   GraXpert denoise model 3.0.2: {problem}; skipping (darkroom doctor explains the fix)")
 else:
-    dst = tools.cache_dir() / f"graxpert_denoise_3.0.2_b{denoise.BATCH}.onnx"
+    models.verify_denoise_model(src, log=lambda m: print("   " + m))
+    dst = models.fixed_batch_path()
     had = dst.is_file()
     with tempfile.TemporaryDirectory() as d:
         try:
@@ -106,11 +112,24 @@ else
     for d in "${skill_dirs[@]}"; do
         d="${d/#\~/$HOME}"
         dest="$d/darkroom"
-        if [ -e "$dest" ] && [ ! -L "$dest" ]; then
+        if [ -L "$dest" ]; then
+            now="$(readlink "$dest")"
+            if [ -d "$dest" ] && [ "$(cd "$dest" && pwd -P)" = "$repo/skill" ]; then
+                echo "== $dest already links to this checkout"
+            elif [ "$replace_skill" -eq 1 ]; then
+                ln -sfn "$repo/skill" "$dest"
+                echo "== relinked $dest -> $repo/skill (it pointed to $now; --replace-skill)"
+            else
+                what="another checkout"
+                [ -e "$dest" ] || what="a folder that no longer exists"
+                echo "== $dest links to $what ($now); left untouched."
+                echo "   Run setup again with --replace-skill to link it to this checkout instead."
+            fi
+        elif [ -e "$dest" ]; then
             echo "== $dest exists and is not a symlink; left untouched"
         else
             mkdir -p "$d"
-            ln -sfn "$repo/skill" "$dest"
+            ln -s "$repo/skill" "$dest"
             echo "== linked $dest -> $repo/skill"
         fi
     done

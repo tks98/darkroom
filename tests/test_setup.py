@@ -11,6 +11,7 @@ import plistlib
 import re
 import shutil
 import stat
+import subprocess
 import sys
 import zipfile
 from pathlib import Path
@@ -506,6 +507,54 @@ def test_url_and_redirect_policy():
     assert installer.allowed_redirects(toolset.build_for("graxpert", "linux-x86_64").url) == \
         {"github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com"}
     assert installer.allowed_redirects(toolset.build_for("siril", "linux-x86_64").url) == set()
+
+
+def test_refused_redirect_names_the_host(monkeypatch, tmp_path):
+    h = installer._Redirects(installer.GITHUB_REDIRECT_HOSTS)
+    with pytest.raises(installer.RedirectRefused) as e:
+        h.redirect_request(None, None, 302, "Found", {}, "https://assets.github-cdn.example/x.zip")
+    msg = installer._short(e.value)
+    assert "https://assets.github-cdn.example" in msg and "release-assets.githubusercontent.com" in msg
+    assert "needs an update" in msg
+    b = pin(monkeypatch, "graxpert", "macos-arm64", b"payload")
+    with pytest.raises(tools.StageError, match=r"redirected to https://new-host\.example; refused \(darkroom follows "
+                                               r"redirects only to github\.com"):
+        installer.download(b, tmp_path / "a", Opener({b.url: b"payload"}, {b.url: "https://new-host.example/x"}),
+                           log=lambda m: None)
+    s = pin(monkeypatch, "siril", "macos-arm64", b"payload")
+    with pytest.raises(tools.StageError, match="follows no redirects for this download"):
+        installer.download(s, tmp_path / "b", Opener({s.url: b"payload"}, {s.url: "https://mirror.example/x"}),
+                           log=lambda m: None)
+
+
+def test_bare_executables_are_assessed_by_their_signature(tmp_path):
+    exe = tmp_path / "siril-cli"
+    exe.write_text("x")
+    assert toolset.assess_command(tmp_path / "Siril.app")[:4] == ["spctl", "-a", "-t", "exec"]
+    assert toolset.assess_command(exe) == ["spctl", "-a", "-t", "open", "--context", "context:primary-signature",
+                                           "-vv", str(exe)]
+    fake = FakeMac(notarized=())
+    fake.xattrs[str(exe)] = "0081;6a000000;darkroom;"
+    msg = toolset.gatekeeper_block(exe, fake, system="darwin")
+    assert "not notarized" in msg and f"run it once yourself in Terminal ('{exe}'" in msg
+
+
+@pytest.mark.parametrize("answer", [subprocess.TimeoutExpired(["xattr"], 5), FileNotFoundError("xattr"),
+                                    (1, "xattr: [Errno 13] Permission denied")])
+def test_unreadable_quarantine_flag_is_not_run(tmp_path, answer):
+    exe = tmp_path / "GraXpert"
+    exe.write_text("x")
+
+    def run(cmd, timeout=None):
+        assert cmd[:2] == ["xattr", "-p"], "nothing else may run when the flag cannot be read"
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
+    assert toolset.quarantine_probe(exe, run)[0] == "unknown"
+    msg = toolset.gatekeeper_block(exe, run, system="darwin")
+    assert msg and "could not tell whether macOS has quarantined" in msg and "did not run it" in msg
+    assert toolset.quarantine_probe(exe, lambda c, timeout=None: (1, "No such xattr: com.apple.quarantine")) == \
+        ("none", "")
 
 
 # ---------------------------------------------------------------- Linux installs

@@ -531,6 +531,7 @@ def starnet(work: Path, starnet_dir: str | None = None) -> None:
     backend = sn.detect(d)
     if backend is None:
         raise tools.StageError(f"neither starnet2 nor starnet++ found in {d}")
+    sn.require_runnable(backend)            # macOS: never start a StarNet that Gatekeeper would block
     log = tools.logs_dir(work) / "starnet.log"
     log.write_text(f"[darkroom] {backend.label} in {d}\n")
     print(f"starnet: {backend.label} in {d}", flush=True)
