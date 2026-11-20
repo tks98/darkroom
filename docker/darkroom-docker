@@ -11,12 +11,14 @@
 #   docker/darkroom-docker --work ~/astro/m31 -- get-starnet          # once; you must accept StarNet's licence
 #   docker/darkroom-docker --subs ~/astro/M31_sub --darks ~/astro/darklibrary --work ~/astro/m31 -- run --work /work
 #
-# Downloads (GraXpert's models, StarNet) are kept in the Docker volume "darkroom-cache".
+# Downloads (GraXpert's models, StarNet) are kept in the Docker volume "darkroom-cache"
+# (another volume: DARKROOM_CACHE_VOLUME=name).
 set -euo pipefail
 
 image="${DARKROOM_IMAGE:-darkroom}"
+volume="${DARKROOM_CACHE_VOLUME:-darkroom-cache}"
 work="" subs="" darks=""
-usage() { sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; }
 die() { echo "darkroom-docker: $*" >&2; exit 2; }
 
 # value OPTION ARGS...: the argument after OPTION, which must be there and not be another option
@@ -53,7 +55,7 @@ done
 mkdir -p -- "$work"
 
 abs() { (cd -- "$1" && pwd -P); }
-args=(--rm --platform linux/amd64 -v darkroom-cache:/cache -v "$(abs "$work"):/work")
+args=(--rm --platform linux/amd64 -v "$volume:/cache" -v "$(abs "$work"):/work")
 if [ -n "$subs" ]; then args+=(-v "$(abs "$subs"):/subs:ro"); fi
 if [ -n "$darks" ]; then args+=(-v "$(abs "$darks"):/darks:ro"); fi
 if [ -t 0 ] && [ -t 1 ]; then args+=(-it); fi

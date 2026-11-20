@@ -67,7 +67,7 @@ The image sets its home directory to `/cache`, which the wrapper mounts as the D
 docker volume rm darkroom-cache
 ```
 
-`/cache` and `/work` in the image are writable by every user (with the sticky bit, like `/tmp`), so the volume works whatever uid the container runs as. A volume used with an image from before November 2026, which ran as root, holds files owned by root that your user cannot change. Either remove the volume as above (GraXpert's models and StarNet are then downloaded again), or hand its files to your user once:
+`/cache` and `/work` in the image are writable by every user (with the sticky bit, like `/tmp`), so the volume works whatever uid the container runs as. A volume used with an image from before November 2026, which ran as root, holds files owned by root that your user cannot change. The image then stops with a message that says so. Either remove the volume as above (GraXpert's models and StarNet are then downloaded again), or hand its files to your user once:
 
 ```sh
 docker run --rm --user 0 -v darkroom-cache:/cache --entrypoint chown darkroom -R "$(id -u):$(id -g)" /cache

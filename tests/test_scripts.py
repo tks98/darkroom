@@ -145,6 +145,6 @@ def test_setup_no_skill(tmp_path):
 
 
 def test_scripts_parse():
-    for script in ("setup.sh", "docker/darkroom-docker", "docker/siril-cli"):
-        sh = BASH if script != "docker/siril-cli" else (shutil.which("sh") or BASH)
+    for script in ("setup.sh", "docker/darkroom-docker", "docker/siril-cli", "docker/entrypoint"):
+        sh = BASH if script not in ("docker/siril-cli", "docker/entrypoint") else (shutil.which("sh") or BASH)
         assert subprocess.run([sh, "-n", str(REPO / script)]).returncode == 0, script

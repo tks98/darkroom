@@ -54,6 +54,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=tools /opt/siril /opt/siril
 COPY --from=tools /opt/graxpert /opt/graxpert
 COPY docker/siril-cli /usr/local/bin/siril-cli
+COPY docker/entrypoint /usr/local/bin/darkroom-entrypoint
 COPY docker/NOTICE /usr/share/doc/darkroom-image/NOTICE
 
 COPY pyproject.toml README.md LICENSE /src/darkroom/
@@ -77,5 +78,5 @@ ENV PATH=/opt/venv/bin:$PATH \
 VOLUME /cache
 WORKDIR /work
 USER 1000:1000
-ENTRYPOINT ["darkroom"]
+ENTRYPOINT ["darkroom-entrypoint"]
 CMD ["--help"]

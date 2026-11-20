@@ -100,8 +100,9 @@ jobs:
         run: |
           for f in setup.sh docker/darkroom-docker; do bash -n "$f"; done
           sh -n docker/siril-cli
+          sh -n docker/entrypoint
       - name: shellcheck
         # shellcheck is preinstalled on GitHub's Ubuntu runners
         run: |
           shellcheck --version
-          shellcheck setup.sh docker/darkroom-docker docker/siril-cli
+          shellcheck setup.sh docker/darkroom-docker docker/siril-cli docker/entrypoint

@@ -122,3 +122,7 @@ A review of the pipeline found five defects, now fixed. None of them moves the o
 ## Installer and packaging hardening
 
 After a code review in November 2026: StarNet2 downloads are hash-checked for every 2.6.2 build, and a build darkroom has no hash for needs the user's confirmation. The zip extractor refuses entries that would land outside the target folder, and the StarNet zip is unpacked only after the licence is accepted. On macOS, StarNet2 is marked as downloaded, like Siril and GraXpert, so Gatekeeper judges it. The denoise model is checked against a pinned size and SHA-256. The Docker image runs as an unprivileged user. CI builds the wheel and runs the tests against it. None of this changes the image maths or the M31 output.
+
+## A single zero pixel and the mosaic crop
+
+The Alnilam stack has one pixel inside the covered area that is exactly 0 in one channel. The crop used to count any pixel with a 0 in any channel as empty, so that one pixel limited the rectangle: 31.75° and 4140×2814 (69% of the pixels with data). A pixel now counts as empty only when all its channels are 0, and a small empty patch surrounded by data is ignored. On the same stack the crop became 27.5° and 4096×2951 (71%), still with the three belt stars, the Horsehead and the Flame Nebula, and with no empty pixel in it.

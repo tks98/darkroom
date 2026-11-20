@@ -153,7 +153,7 @@ cheap to fix at the stage that caused them and expensive to notice at the end.
 - Look at the crop it printed. `stack.fit` is the largest rectangle with data
   everywhere. With the default `[stack] mosaic_crop = "rotate"` it may be
   turned ("turned the ... canvas N deg"): on the diagonal Alnilam mosaic,
-  31.75 deg kept 69% of the pixels with data instead of 52% upright. North is
+  27.5 deg kept 71% of the pixels with data instead of 52% upright. North is
   then no longer up; if the user wants it up, set `mosaic_crop = "rect"` and
   restack with `--reuse-registration`. If the crop cuts the target, tell the
   user and offer to crop `stack_full.fit` by hand instead.
