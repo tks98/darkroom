@@ -126,16 +126,36 @@ def check(kind: str, lights: darks.Survey, frames: darks.Survey) -> tuple[list[s
                         f"through {', '.join(lights.filters)}; flats must be taken through the same filter, or "
                         "vignetting and dust shadows will not be corrected properly")
     if kind == "flats" and lights.dates and frames.dates:
-        gap = min(abs((_day(f) - _day(l)).days) for f in frames.dates for l in lights.dates)
-        if gap > 1:
-            warnings.append(f"the flats were taken {gap} days from the lights; dust moves and the camera may "
-                            "have been turned in between, so dust shadows can be over- or under-corrected")
+        fdays = [d for d in map(_day, frames.dates) if d is not None]
+        ldays = [d for d in map(_day, lights.dates) if d is not None]
+        if fdays and ldays:
+            gap = min(abs((f - l).days) for f in fdays for l in ldays)
+            if gap > 1:
+                warnings.append(f"the flats were taken {gap} days from the lights; dust moves and the camera "
+                                "may have been turned in between, so dust shadows can be over- or "
+                                "under-corrected")
+        else:
+            bad = next(d for d in frames.dates + lights.dates if _day(d) is None)
+            warnings.append(f"cannot read the date DATE-OBS = {bad!r}, so the flats' date is not compared "
+                            "with the lights'")
     return errors, warnings
 
 
+_DATE_FORMATS = ("%Y-%m-%d", "%Y/%m/%d", "%d/%m/%Y", "%d/%m/%y", "%Y.%m.%d", "%d.%m.%Y", "%Y%m%d")
+
+
 def _day(text: str):
+    """The date of a DATE-OBS value (ISO 8601, or the old FITS dd/mm/yy and a few common forms);
+    None when it cannot be read."""
     import datetime
-    return datetime.date.fromisoformat(text)
+    t = str(text).strip()
+    for cand in (t[:10], t):
+        for fmt in _DATE_FORMATS:
+            try:
+                return datetime.datetime.strptime(cand, fmt).date()
+            except ValueError:
+                continue
+    return None
 
 
 def describe(src: Path, sv: darks.Survey, lights: darks.Survey | None = None) -> str:
@@ -197,18 +217,40 @@ def _cleanup(work: Path) -> None:
                 shutil.rmtree(d)
 
 
+def _was_folder(work: Path | None, kind: str, src: Path) -> bool:
+    """Whether ``src`` is a folder of raw frames, or was one when its master was built (an
+    unplugged drive)."""
+    if src.is_dir():
+        return True
+    if src.exists() or work is None:
+        return False
+    old = stages.recorded_params(work, _record_name(kind))
+    return bool(old) and old.get("frames") == str(src)
+
+
 def prepare(work: Path | None, lights: darks.Survey | None, dark: Path | None = None,
-            bias: Path | None = None, flats: Path | None = None, log=print) -> Calibration:
+            bias: Path | None = None, flats: Path | None = None, log=print,
+            dark_matched: bool = False) -> Calibration:
     """Check the calibration frames against the lights, build the masters that are missing or
     out of date, and return the master files to calibrate the lights with. ``dark``, ``bias`` and
-    ``flats`` are each None, a master file or a folder of raw frames."""
+    ``flats`` are each None, a master file or a folder of raw frames. ``dark_matched``: the dark
+    was picked from a library for the lights' exposure and temperature, so only its size, Bayer
+    pattern, gain and offset are checked here."""
     sources = {"bias": bias, "dark": dark, "flats": flats}
+    resolved = {k: Path(v).expanduser().resolve() for k, v in sources.items() if v is not None}
+    flat_folder = "flats" in resolved and _was_folder(work, "flats", resolved["flats"])
+    bias_unused = "bias" in resolved and "dark" in resolved and not flat_folder
     errors, masters, todo = [], {}, {}
     for kind in KINDS:
         src = sources[kind]
         if src is None:
             continue
-        src = Path(src).expanduser().resolve()
+        if kind == "bias" and bias_unused:
+            # the dark contains the bias, and there are no raw flats to calibrate with it
+            log("bias: not used; the lights get the dark subtracted, which contains the bias, and there are "
+                "no raw flats to calibrate with it")
+            continue
+        src = resolved[kind]
         if not src.exists():
             out = master_path(work, kind) if work is not None else None
             old = stages.recorded_params(work, _record_name(kind)) if work is not None else None
@@ -228,6 +270,8 @@ def prepare(work: Path | None, lights: darks.Survey | None, dark: Path | None = 
             log(f"WARNING: cannot check the {WHAT[kind]} against the lights: {e}")
         if sv is not None and lights is not None:
             err, warn = check(kind, lights, sv)
+            if kind == "dark" and dark_matched:      # exposure and temperature were matched already
+                warn = [w for w in warn if not w.startswith("the darks are")]
             errors += err
             for w in warn:
                 log(f"WARNING: {w}")
@@ -250,13 +294,9 @@ def prepare(work: Path | None, lights: darks.Survey | None, dark: Path | None = 
             log(f"{kind}: stacking {len(files)} frames from {src} into {masters[kind].name} ({why})")
     if errors:
         raise tools.StageError("calibration: " + "\ncalibration: ".join(errors))
-    flat_folder = masters.get("flats") == (master_path(work, "flats") if work is not None else None)
     if "flats" in todo and "bias" not in masters:
         log("WARNING: the flats are stacked without a bias, so the master flat keeps the camera's bias "
             "level and corrects vignetting and dust too weakly; give a bias (--bias) as well")
-    if "bias" in masters and "dark" in masters and not flat_folder:
-        log("bias: not used; the lights get the dark subtracted, which contains the bias, and there are "
-            "no raw flats to calibrate with it")
     if todo:
         build(work, todo, masters.get("bias"), log)
     return Calibration(dark=masters.get("dark"), flats=masters.get("flats"),

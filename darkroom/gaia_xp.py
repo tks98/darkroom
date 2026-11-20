@@ -29,10 +29,14 @@ ranges of public files) are sent.
 """
 from __future__ import annotations
 
+import contextlib
+import hashlib
+import http.client
 import json
 import math
 import os
 import re
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -286,40 +290,103 @@ def read_chunk(path: Path) -> tuple[Header, dict[int, bytes]]:
     return h, out
 
 
+def disc(ra: float, dec: float, radius_deg: float) -> set[int]:
+    """disc_pixels, with a field the local copy cannot serve as a StageError (the color stage
+    then lets Siril download the spectra itself)."""
+    try:
+        return disc_pixels(ra, dec, radius_deg)
+    except ValueError as e:
+        raise tools.StageError(f"the local SPCC catalogue cannot serve this field: {e}") from None
+
+
+LOCK = ".lock"
+
+
 class Store:
-    """The local catalogue folder."""
+    """The local catalogue folder.
+
+    ``coverage.json`` lists the pixels fetched and, per chunk file, its size and a digest of
+    its index. A pixel counts only while its chunk file is whole and is the one recorded, so a
+    damaged or truncated file, or one rewritten without its record, is fetched again instead
+    of silently giving SPCC fewer stars. Adding to the store holds an exclusive lock on
+    ``.lock`` in the folder, so two darkroom processes do not overwrite each other's pixels."""
 
     def __init__(self, root: Path | None = None):
         self.root = Path(root) if root is not None else catalogue_dir()
 
+    def _fingerprint(self, chunk: int) -> dict | None:
+        """Size and index digest of a chunk file that is whole (header, cumulative index, as many
+        records as the index says), else None."""
+        path = self.root / chunk_name(chunk)
+        try:
+            size = path.stat().st_size
+            with open(path, "rb") as f:
+                head = f.read(HEADER_SIZE + INDEX_SIZE)
+            parse_header(head[:HEADER_SIZE], chunk)
+            index = parse_index(head[HEADER_SIZE:])
+        except (OSError, ValueError):
+            return None
+        if size != HEADER_SIZE + INDEX_SIZE + int(index[-1]) * RECORD_SIZE:
+            return None
+        return {"size": size, "index": hashlib.sha1(head[HEADER_SIZE:]).hexdigest()[:16]}
+
     def coverage(self) -> set[int]:
         try:
             data = json.loads((self.root / COVERAGE).read_text())
-        except (OSError, ValueError):
+            if data.get("level") != LEVEL or data.get("chunk_level") != CHUNK_LEVEL:
+                return set()
+            have = set()
+            for a, b in data.get("pixels", []):
+                have.update(range(int(a), int(b) + 1))
+            files = data.get("chunks")          # absent in records written before it existed
+        except (OSError, ValueError, TypeError, AttributeError):
             return set()
-        if data.get("level") != LEVEL or data.get("chunk_level") != CHUNK_LEVEL:
-            return set()
-        have = set()
-        for a, b in data.get("pixels", []):
-            have.update(range(int(a), int(b) + 1))
-        # a pixel only counts while its chunk file is there
-        return {p for p in have if (self.root / chunk_name(chunk_of(p))).is_file()}
+        out = set()
+        for chunk, pixels in by_chunk(have).items():
+            fp = self._fingerprint(chunk)       # the chunk file must be there and whole ...
+            if fp is None or (isinstance(files, dict) and files.get(str(chunk)) != fp):
+                continue                        # ... and be the file this record describes
+            out.update(pixels)
+        return out
 
     def missing(self, pixels: Iterable[int]) -> set[int]:
         return set(pixels) - self.coverage()
 
     def covers(self, ra: float, dec: float, radius_deg: float) -> bool:
-        return not self.missing(disc_pixels(ra, dec, radius_deg))
+        return not self.missing(disc(ra, dec, radius_deg))
 
     def size(self) -> int:
         return sum(p.stat().st_size for p in self.root.glob(chunk_name(0).replace("_0.dat", "_*.dat")))
 
+    @contextlib.contextmanager
+    def locked(self):
+        """An exclusive lock on the store, held across processes (flock; Linux and macOS)."""
+        self.root.mkdir(parents=True, exist_ok=True)
+        try:
+            import fcntl
+        except ImportError:                     # no flock on this platform: unlocked
+            yield
+            return
+        with open(self.root / LOCK, "a+b") as f:
+            try:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            except OSError:                     # a filesystem without locks: carry on unlocked
+                yield
+                return
+            try:
+                yield
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+
     def add(self, chunk: int, header: bytes, records: dict[int, bytes]) -> None:
         """Merge fetched pixels (global pixel -> records) into the chunk file, then record them."""
-        self.root.mkdir(parents=True, exist_ok=True)
+        with self.locked():
+            self._add(chunk, header, records)
+
+    def _add(self, chunk: int, header: bytes, records: dict[int, bytes]) -> None:
         path = self.root / chunk_name(chunk)
         first = chunk * PIX_PER_CHUNK
-        known = self.coverage()
+        known = self.coverage()                 # read under the lock: what the file holds now
         old_pixels = {p for p in known if chunk_of(p) == chunk}
         merged: dict[int, bytes] = {}
         if path.is_file() and old_pixels:
@@ -336,23 +403,34 @@ class Store:
             merged[p - first] = data
         _write_atomic(path, build_chunk(header, merged))
         # the file first, then the record of what it holds: a crash in between only
-        # means fetching those pixels again
+        # means fetching that chunk's pixels again (its digest no longer matches)
         others = {p for p in known if chunk_of(p) != chunk}
         self._write_coverage(others | old_pixels | set(records))
 
     def _write_coverage(self, pixels: set[int]) -> None:
+        files = {}
+        for chunk in by_chunk(pixels):
+            fp = self._fingerprint(chunk)
+            if fp is not None:
+                files[str(chunk)] = fp
+        pixels = {p for p in pixels if str(chunk_of(p)) in files}
         data = {"level": LEVEL, "chunk_level": CHUNK_LEVEL,
-                "pixels": [list(r) for r in runs(sorted(pixels))]}
+                "pixels": [list(r) for r in runs(sorted(pixels))], "chunks": files}
         _write_atomic(self.root / COVERAGE, (json.dumps(data) + "\n").encode())
 
 
 def _write_atomic(path: Path, data: bytes) -> None:
-    tmp = path.with_name(path.name + ".darkroom-tmp")
+    """Write through a temporary file of this process's own, then rename it into place."""
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".darkroom-tmp")
     try:
-        tmp.write_bytes(data)
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
         os.replace(tmp, path)
     finally:
-        tmp.unlink(missing_ok=True)
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
 
 
 # ------------------------------------------------------------------ download
@@ -388,6 +466,8 @@ def http_range(url: str, start: int, length: int, timeout: float = TIMEOUT) -> b
         raise FetchError(f"HTTP {e.code}", retry=e.code == 429 or e.code >= 500, wait=wait) from None
     except (urllib.error.URLError, OSError) as e:          # timeouts, resets, DNS
         raise FetchError(f"{getattr(e, 'reason', e)}") from None
+    except http.client.HTTPException as e:                  # a cut-off answer (IncompleteRead), a bad status line
+        raise FetchError(f"{type(e).__name__}: {e}") from None
     if len(data) != length:
         raise FetchError(f"got {len(data)} bytes, wanted {length}")
     return data
@@ -504,7 +584,7 @@ def ensure(ra: float, dec: float, radius_deg: float, store: Store | None = None,
     """Make the local catalogue cover the disc; fetch only the pixels not there yet.
     Returns the catalogue folder. Raises StageError when a fetch fails on every mirror."""
     store = store or Store()
-    pixels = disc_pixels(ra, dec, radius_deg)
+    pixels = disc(ra, dec, radius_deg)
     todo = store.missing(pixels)
     if not todo:
         log(f"spcc catalogue: the local copy already covers this field "
@@ -520,6 +600,9 @@ def ensure(ra: float, dec: float, radius_deg: float, store: Store | None = None,
             store.add(chunk, header, records)
     except (FetchError, TooBig) as e:
         raise tools.StageError(f"could not download the SPCC star spectra: {e}") from None
+    except OSError as e:                # an unwritable or full cache
+        raise tools.StageError(f"cannot write the local SPCC catalogue in {store.root}: "
+                               f"{e.strerror or e}") from None
     log(f"spcc catalogue: fetched {len(todo)} of {len(pixels)} sky pixels for this field "
         f"({fetcher.bytes / 1e6:.1f} MB in {time.time() - t0:.0f}s from "
         f"{', '.join(sorted(_host(u) for u in fetcher.used)) or 'no mirror'}) into {store.root}")
@@ -543,6 +626,10 @@ class Field:
     solved: bool                # from a WCS (plate solve) rather than the commanded pointing
 
 
+MIN_SCALE = 1e-5            # deg per pixel (0.036"): finer than any telescope and camera here
+MAX_SCALE = 0.1             # deg per pixel (6'): coarser than a fisheye lens on a large pixel
+
+
 def field_of(path: Path, focal_mm: float, pixel_um: float) -> Field | None:
     """The sky field of a FITS image from its header, or None when it does not say.
     Reads only the centre coordinates, the image size and the WCS scale."""
@@ -555,12 +642,17 @@ def field_of(path: Path, focal_mm: float, pixel_um: float) -> Field | None:
     if not (isinstance(w, int) and isinstance(hgt, int) and w > 0 and hgt > 0):
         return None
     scale = None                # degrees per pixel
-    if "CTYPE1" in h and "CRVAL1" in h and "CRVAL2" in h:
-        if "CDELT1" in h and "CDELT2" in h:
-            scale = math.sqrt(abs(float(h["CDELT1"]) * float(h["CDELT2"])))
-        elif "CD1_1" in h:
-            scale = math.sqrt(abs(float(h["CD1_1"]) * float(h.get("CD2_2", 0))
-                                  - float(h.get("CD1_2", 0)) * float(h.get("CD2_1", 0))))
+    try:
+        if "CTYPE1" in h and "CRVAL1" in h and "CRVAL2" in h:
+            if "CDELT1" in h and "CDELT2" in h:
+                scale = math.sqrt(abs(float(h["CDELT1"]) * float(h["CDELT2"])))
+            elif "CD1_1" in h:
+                scale = math.sqrt(abs(float(h["CD1_1"]) * float(h.get("CD2_2", 0))
+                                      - float(h.get("CD1_2", 0)) * float(h.get("CD2_1", 0))))
+    except (TypeError, ValueError):
+        scale = None
+    if scale is not None and not (math.isfinite(scale) and MIN_SCALE <= scale <= MAX_SCALE):
+        scale = None            # a placeholder WCS (e.g. CDELT = 1), not a plate solve
     try:
         if scale:
             ra, dec, solved = float(h["CRVAL1"]), float(h["CRVAL2"]), True
@@ -577,16 +669,20 @@ def field_of(path: Path, focal_mm: float, pixel_um: float) -> Field | None:
             ra = _sexagesimal(str(h["OBJCTRA"]), True)
             dec = _sexagesimal(str(h["OBJCTDEC"]), False)
             solved = False
+        elif "CTYPE1" in h and "CRVAL1" in h and "CRVAL2" in h:     # a WCS with no usable scale
+            ra, dec, solved = float(h["CRVAL1"]) % 360, float(h["CRVAL2"]), False
         else:
             return None
-    except (TypeError, ValueError, IndexError, KeyError):
+    except Exception:           # a header astropy's WCS cannot use: no field, not a crash
         return None
     if not (0 <= ra < 360 and -90 <= dec <= 90):
         return None
     if not scale:
-        if focal_mm <= 0 or pixel_um <= 0:
+        if not (focal_mm > 0 and pixel_um > 0):
             return None
         scale = pixel_um / focal_mm * 206.264806 / 3600
+    if not math.isfinite(scale):
+        return None
     return Field(ra, dec, scale * math.hypot(w, hgt) / 2, solved)
 
 
@@ -699,7 +795,7 @@ def run_catalog(a) -> int:
           + (f", in {len(by_chunk(have))} of {N_CHUNKS} files" if have else ""))
     if a.work is not None:
         ra, dec, radius, src = _field_for(a)
-        pixels = disc_pixels(ra, dec, radius)
+        pixels = disc(ra, dec, radius)
         miss = store.missing(pixels)
         print(f"  field of {a.work} (from {src}): "
               + ("covered" if not miss else f"{len(miss)} of {len(pixels)} sky pixels missing; "

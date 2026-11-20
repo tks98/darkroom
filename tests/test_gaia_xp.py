@@ -621,3 +621,159 @@ def test_doctor_reports_coverage(monkeypatch, tmp_path):
     assert doctor.check_spcc_catalogue(tmp_path, store).status == doctor.OK
     (tmp_path / "darkroom.toml").write_text("[color]\nspcc_local = false\n")
     assert doctor.check_spcc_catalogue(tmp_path, store) is None
+
+
+# ------------------------------------------------------------------ errors that must fall back, not crash
+
+def test_a_field_too_wide_for_the_local_copy_is_a_stage_error(tmp_path):
+    store = g.Store(tmp_path)
+    with pytest.raises(tools.StageError, match="cannot serve this field"):
+        g.ensure(*M31, 40, store=store, fetcher=fetcher(Mirrors({}), []), log=lambda s: None)
+    with pytest.raises(tools.StageError, match="cannot serve this field"):
+        store.covers(*M31, 40)
+    with pytest.raises(tools.StageError):          # stages.py: the color stage then goes online
+        stages._local_spcc_needs_more(SOLVED_LOG.replace("4.10 degrees", "80.00 degrees"), say=lambda m: None)
+
+
+def test_an_unwritable_cache_is_a_stage_error(tmp_path, monkeypatch):
+    m = Mirrors({"A": remote_file(2, {p: 1 for p in g.disc_pixels(*M31, 0.3)})})
+
+    def full(path, data):
+        raise OSError(28, "No space left on device", str(path))
+    monkeypatch.setattr(g, "_write_atomic", full)
+    with pytest.raises(tools.StageError, match="cannot write the local SPCC catalogue.*No space left"):
+        g.ensure(*M31, 0.3, store=g.Store(tmp_path), fetcher=fetcher(m, ["A"]), log=lambda s: None)
+    monkeypatch.undo()
+    blocker = tmp_path / "file"
+    blocker.write_text("not a folder")
+    with pytest.raises(tools.StageError, match="cannot write the local SPCC catalogue"):
+        g.ensure(*M31, 0.3, store=g.Store(blocker / "cat"), fetcher=fetcher(m, ["A"]), log=lambda s: None)
+
+
+def test_color_falls_back_when_the_field_is_too_wide(monkeypatch, tmp_path, capsys):
+    # e.g. a 14 mm lens: the field is wider than the local copy serves
+    write_fits(tmp_path / stages.BGE, RA=M31[0], DEC=M31[1])
+    monkeypatch.setattr(g, "field_of", lambda p, f, px: g.Field(M31[0], M31[1], 45.0, False))
+    assert stages._spcc_catalogue(tmp_path / stages.BGE, 14, 4.63, say=print) is None
+    assert "Siril will try to download them itself" in capsys.readouterr().out
+
+
+def test_field_of_ignores_a_placeholder_wcs(tmp_path):
+    p = write_fits(tmp_path / "p.fits", CTYPE1="RA---TAN", CTYPE2="DEC--TAN", CRVAL1=M31[0], CRVAL2=M31[1],
+                   CRPIX1=1, CRPIX2=1, CDELT1=1.0, CDELT2=1.0, RA=11.0, DEC=40.0)
+    f = g.field_of(p, 160, 2.9)
+    scale = 2.9 / 160 * 206.264806 / 3600
+    assert (f.ra, f.dec, f.solved) == (11.0, 40.0, False) and f.radius_deg == pytest.approx(scale * 25)
+    p = write_fits(tmp_path / "q.fits", CTYPE1="RA---TAN", CTYPE2="DEC--TAN", CRVAL1=M31[0], CRVAL2=M31[1],
+                   CDELT1=1.0, CDELT2=1.0)
+    f = g.field_of(p, 160, 2.9)                     # no RA/DEC: the WCS reference point, unsolved
+    assert (f.ra, f.dec, f.solved) == (M31[0], M31[1], False)
+    p = write_fits(tmp_path / "r.fits", CTYPE1="RA---TAN", CRVAL1=M31[0], CRVAL2=M31[1], CDELT1="x",
+                   CDELT2=0.001, RA=11.0, DEC=40.0)
+    assert g.field_of(p, 160, 2.9).ra == 11.0       # an unreadable scale is no crash either
+    assert g.field_of(p, 0, 2.9) is None
+
+
+def test_catalog_status_with_a_field_too_wide_is_an_error_not_a_traceback(tmp_path, capsys):
+    write_fits(tmp_path / stages.BGE, RA=M31[0], DEC=M31[1])
+    (tmp_path / "darkroom.toml").write_text("[color]\nfocal = 0.01\npixel = 4.63\n")
+    assert cli.main(["catalog", "status", "--work", str(tmp_path)]) == 1
+    assert "cannot serve this field" in capsys.readouterr().err
+
+
+# ------------------------------------------------------------------ truncated answers
+
+def test_http_range_turns_a_cut_off_answer_into_a_retry(monkeypatch):
+    import http.client
+
+    class Cut(FakeResponse):
+        def read(self, n):
+            raise http.client.IncompleteRead(b"x" * 10, n - 10)
+    monkeypatch.setattr(g.urllib.request, "urlopen", lambda req, timeout, context: Cut(206, b""))
+    with pytest.raises(g.FetchError, match="IncompleteRead") as e:
+        g.http_range("https://example.invalid/f.dat", 0, 64)
+    assert e.value.retry
+
+    def bad_status(req, timeout, context):
+        raise http.client.BadStatusLine("")
+    monkeypatch.setattr(g.urllib.request, "urlopen", bad_status)
+    with pytest.raises(g.FetchError):
+        g.http_range("https://example.invalid/f.dat", 0, 64)
+
+
+def test_fetcher_retries_a_cut_off_answer():
+    m = Mirrors({"A": remote_file(2, COUNTS)}, {"A": [g.FetchError("IncompleteRead: 10 bytes read")]})
+    sleeps = []
+    header, recs = fetcher(m, ["A"], sleeps).fetch_chunk(2, [FIRST + 3])
+    assert len(recs[FIRST + 3]) == 3 * 701 and sleeps == [g.BACKOFF]
+
+
+# ------------------------------------------------------------------ the store: damage and two processes
+
+def test_a_truncated_or_replaced_chunk_is_fetched_again(tmp_path):
+    store = g.Store(tmp_path)
+    first = 2 * g.PIX_PER_CHUNK
+    store.add(2, header_for(2), {first + 1: records_in(first + 1, 2), first + 2: b""})
+    assert store.coverage() == {first + 1, first + 2}
+    data = json.loads((tmp_path / "coverage.json").read_text())
+    assert set(data["chunks"]) == {"2"} and data["chunks"]["2"]["size"] == 128 + g.INDEX_SIZE + 2 * 701
+    path = tmp_path / g.chunk_name(2)
+    whole = path.read_bytes()
+    path.write_bytes(whole[:-100])                      # truncated
+    assert store.coverage() == set() and store.missing([first + 1]) == {first + 1}
+    # a whole file that the record does not describe (as an interleaved write left it)
+    path.write_bytes(g.build_chunk(header_for(2), {5: records_in(first + 5, 1)}))
+    assert store.coverage() == set()
+    path.write_bytes(whole)
+    assert store.coverage() == {first + 1, first + 2}
+    # a record written before the per-file digests existed is still trusted while the file is whole
+    del data["chunks"]
+    (tmp_path / "coverage.json").write_text(json.dumps(data))
+    assert store.coverage() == {first + 1, first + 2}
+    path.write_bytes(whole[:-1])
+    assert store.coverage() == set()
+    # the next add starts the damaged chunk over
+    store.add(2, header_for(2), {first + 7: b""})
+    assert store.coverage() == {first + 7}
+    assert not list(tmp_path.glob("*.darkroom-tmp"))
+
+
+def test_add_waits_for_the_lock(tmp_path):
+    import threading
+    store = g.Store(tmp_path)
+    first = 2 * g.PIX_PER_CHUNK
+    done = threading.Event()
+
+    def add():
+        store.add(2, header_for(2), {first + 1: b""})
+        done.set()
+    with store.locked():
+        t = threading.Thread(target=add)
+        t.start()
+        assert not done.wait(0.3)                        # blocked while the lock is held
+    t.join(5)
+    assert done.is_set() and store.coverage() == {first + 1}
+
+
+ADDER = """
+import sys
+from darkroom import gaia_xp as g
+root, offset, header = sys.argv[1], int(sys.argv[2]), bytes.fromhex(sys.argv[3])
+store = g.Store(root)
+first = 2 * g.PIX_PER_CHUNK
+for i in range(25):
+    store.add(2, header, {first + offset + 2 * i: b""})
+"""
+
+
+def test_two_processes_adding_to_one_chunk_lose_nothing(tmp_path):
+    import os
+    import subprocess
+    import sys
+    env = dict(os.environ, PYTHONPATH=str(Path(g.__file__).resolve().parent.parent))
+    hx = header_for(2).hex()
+    procs = [subprocess.Popen([sys.executable, "-c", ADDER, str(tmp_path), str(k), hx], env=env)
+             for k in (0, 1)]
+    assert [p.wait(60) for p in procs] == [0, 0]
+    first = 2 * g.PIX_PER_CHUNK
+    assert g.Store(tmp_path).coverage() == {first + i for i in range(50)}

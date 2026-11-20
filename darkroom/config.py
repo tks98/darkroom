@@ -9,6 +9,8 @@ The built-in defaults equal the shipped ``seestar-s30-pro`` camera preset and
 """
 from __future__ import annotations
 
+import math
+import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -98,8 +100,11 @@ SCHEMA: dict[str, dict[str, tuple[str, object, str]]] = {
     },
 }
 
-# Built-in copy of the Seestar dark-library layout and camera facts, used when no
-# camera preset is named. Must stay equal to presets/cameras/seestar-s30-pro.toml.
+# Camera facts used when no camera preset is named, and the base a preset's [camera], [filters]
+# and [darks] tables are laid over. [camera] sub_glob "*.fit" takes every FITS file in the subs
+# folder (.fit, .fits and .fts, in any case: see darks.matches), since without a preset the
+# subs' naming is unknown. [darks] must stay equal to presets/cameras/seestar-s30-pro.toml
+# (the Seestar dark-library layout).
 DEFAULT_CAMERA_META = {
     "camera": {"sub_glob": "*.fit"},
     "filters": {},
@@ -110,6 +115,16 @@ DEFAULT_CAMERA_META = {
     },
 }
 _CAMERA_META_SECTIONS = ("camera", "filters", "darks")
+# the keys a camera preset's [camera] and [darks] may hold ([filters] maps any FITS FILTER value)
+CAMERA_META_KEYS = {
+    "camera": {"name": "camera name (informational)",
+               "match_keyword": "FITS keyword that identifies the camera",
+               "match": "text that keyword must contain",
+               "bayer": "expected BAYERPAT of the subs",
+               "sub_glob": "light frames inside the subs folder"},
+    "darks": {"glob": "master darks inside the dark library",
+              "filename": "regular expression for a master dark's file name"},
+}
 _PRESET_SETTING_SECTIONS = tuple(s for s in SCHEMA if s != "target")
 
 
@@ -179,9 +194,14 @@ def _read_toml(path: Path, what: str) -> dict:
         raise ConfigError(f"{what} {path} is not valid TOML: {e}") from None
 
 
+def is_preset_path(name: str) -> bool:
+    """Whether a camera or look setting names a .toml file rather than a shipped preset."""
+    return name.endswith(".toml") or "/" in name
+
+
 def preset_path(kind: str, name: str, base: Path | None = None) -> Path:
     """kind is 'cameras' or 'looks'; name is a preset name or the path of a .toml file."""
-    if name.endswith(".toml") or "/" in name:
+    if is_preset_path(name):
         p = Path(name).expanduser()
         if not p.is_absolute() and base is not None:
             p = base / p
@@ -197,14 +217,19 @@ def _coerce(section: str, key: str, value, where: str, base: Path | None):
     typ = SCHEMA[section][key][0]
     want = {"float": "a number", "int": "a number", "psf": 'a number or "auto"'}.get(typ, typ)
     bad = ConfigError(f"{where}: [{section}] {key} should be {want}, got {value!r}")
+    if typ in ("psf", "float", "int") and isinstance(value, float) and not math.isfinite(value):
+        raise ConfigError(f"{where}: [{section}] {key} should be a finite number, got {value!r}")
     if typ == "psf":
         if isinstance(value, str):
             if value.strip().lower() == "auto":
                 return "auto"
             try:
-                return float(value)
+                v = float(value)
             except ValueError:
                 raise bad from None
+            if not math.isfinite(v):
+                raise bad
+            return v
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise bad
         return value
@@ -236,6 +261,30 @@ def _coerce(section: str, key: str, value, where: str, base: Path | None):
     return value
 
 
+# (section, key, test, what the value should be) checked by _check; every shipped preset and
+# documented example lies well inside these ranges
+_RANGES = (
+    ("bge", "smoothing", lambda v: 0 <= v <= 1, "0 to 1"),
+    ("color", "focal", lambda v: v > 0, "a focal length in mm (> 0)"),
+    ("color", "pixel", lambda v: v > 0, "a pixel size in um (> 0)"),
+    ("denoise", "strength", lambda v: 0 <= v <= 1, "0 to 1"),
+    ("stretch", "asinh", lambda v: v > 0, "a stretch factor > 0 (the looks use 25 to 100)"),
+    ("stretch", "shadows", lambda v: -10 <= v <= 0, "a clipping point in sigma, -10 to 0 (usually about -2.5)"),
+    ("stretch", "target_bg", lambda v: 0 < v < 1, "a background level between 0 and 1 (e.g. 0.10)"),
+    ("stretch", "sat", lambda v: v >= -1, "a saturation amount >= -1 (0 = unchanged)"),
+    ("finish", "gamma", lambda v: v > 0, "> 0 (1 = unchanged)"),
+    ("finish", "star_strength", lambda v: 0 <= v <= 1, "0 to 1"),
+    ("finish", "mid", lambda v: 0 < v < 1, "between 0 and 1 (0.5 = unchanged)"),
+    ("finish", "sat", lambda v: v >= 0, ">= 0 (1 = unchanged)"),
+    ("finish", "yb", lambda v: v >= 0, ">= 0 (1 = off)"),
+    ("finish", "core", lambda v: 0 <= v <= 1, "0 (off) to 1"),
+    ("finish", "sharpen", lambda v: v >= 0, ">= 0 (0 = off)"),
+    ("finish", "sharpen_radius", lambda v: v > 0, "a radius in pixels (> 0)"),
+    ("finish", "black", lambda v: 0 <= v < 1, "0 or more and below 1"),
+    ("finish", "erode", lambda v: v >= 0, "a whole number of passes, 0 or more"),
+)
+
+
 def _check(values: dict[str, dict[str, object]]) -> None:
     s = values["stack"]
     if s["framing"] not in FRAMINGS:
@@ -256,6 +305,14 @@ def _check(values: dict[str, dict[str, object]]) -> None:
         raise ConfigError(f'[finish] stars should be "reduce" or "keep", got {f["stars"]!r}')
     if not 0 < f["crop_scale"] <= 1:
         raise ConfigError(f"[finish] crop_scale is a fraction (0 < value <= 1), got {f['crop_scale']!r}")
+    for section, key, ok, want in _RANGES:
+        v = values[section][key]
+        if not ok(v):
+            raise ConfigError(f"[{section}] {key} should be {want}, got {v!r}")
+    for key in ("sensor", "filter", "catalog", "whiteref"):
+        if '"' in values["color"][key]:
+            raise ConfigError(f"[color] {key} cannot contain a double quote (Siril scripts cannot quote it), "
+                              f"got {values['color'][key]!r}")
     dc = values["deconv"]
     if not 0 <= dc["strength"] <= 1:
         raise ConfigError(f"[deconv] strength is 0 (off) to 1, got {dc['strength']!r}")
@@ -299,7 +356,20 @@ def load_camera(name: str, base: Path | None = None) -> tuple[dict, dict, Path]:
     data = _read_toml(path, "camera preset")
     meta = {k: dict(v) for k, v in DEFAULT_CAMERA_META.items()}
     for k in _CAMERA_META_SECTIONS:
-        meta[k].update(data.get(k, {}))
+        body = data.get(k, {})
+        if not isinstance(body, dict):
+            raise ConfigError(f"{path}: [{k}] should be a table")
+        for key, value in body.items():
+            if k in CAMERA_META_KEYS and key not in CAMERA_META_KEYS[k]:
+                raise ConfigError(f"{path}: unknown key [{k}] {key}; known: " + ", ".join(CAMERA_META_KEYS[k]))
+            if not isinstance(value, str):
+                raise ConfigError(f"{path}: [{k}] {key} should be a string, got {value!r}")
+        meta[k].update(body)
+    try:
+        re.compile(meta["darks"]["filename"])
+    except re.error as e:
+        raise ConfigError(f"{path}: [darks] filename is not a valid regular expression ({e}): "
+                          f"{meta['darks']['filename']!r}") from None
     settings = {k: v for k, v in data.items() if k not in _CAMERA_META_SECTIONS}
     return settings, meta, path
 

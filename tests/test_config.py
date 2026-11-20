@@ -240,3 +240,86 @@ def test_nebula_look_resolves(tmp_path):
     assert s["finish"]["yb"] == 1.0 and s["finish"]["stars"] == "reduce"
     assert s["finish"]["sat"] == 1.5 and s.sources[("finish", "sat")] == "look preset nebula"
     assert settings(tmp_path, "stretch")["stretch"]["target_bg"] == 0.15
+
+
+# --- value ranges
+
+@pytest.mark.parametrize("text,match", [
+    ("[color]\nfocal = 0\n", r"\[color\] focal should be a focal length"),
+    ("[color]\npixel = -2.9\n", r"\[color\] pixel"),
+    ("[bge]\nsmoothing = 1.5\n", r"\[bge\] smoothing"),
+    ("[denoise]\nstrength = 1.2\n", r"\[denoise\] strength should be 0 to 1"),
+    ("[stretch]\nasinh = 0\n", r"\[stretch\] asinh"),
+    ("[stretch]\nshadows = 3\n", r"\[stretch\] shadows"),
+    ("[stretch]\ntarget_bg = 1\n", r"\[stretch\] target_bg"),
+    ("[stretch]\nsat = -2\n", r"\[stretch\] sat"),
+    ("[finish]\ngamma = 0\n", r"\[finish\] gamma"),
+    ("[finish]\nmid = 1\n", r"\[finish\] mid"),
+    ("[finish]\nmid = 0\n", r"\[finish\] mid"),
+    ("[finish]\nblack = 1\n", r"\[finish\] black"),
+    ("[finish]\nblack = -0.1\n", r"\[finish\] black"),
+    ("[finish]\nsat = -1\n", r"\[finish\] sat"),
+    ("[finish]\nyb = -1\n", r"\[finish\] yb"),
+    ("[finish]\ncore = 1.5\n", r"\[finish\] core"),
+    ("[finish]\nsharpen = -0.1\n", r"\[finish\] sharpen should"),
+    ("[finish]\nsharpen_radius = 0\n", r"\[finish\] sharpen_radius"),
+    ("[finish]\nerode = -1\n", r"\[finish\] erode"),
+    ("[finish]\nerode = 1.5\n", r"\[finish\] erode should be a number"),
+    ("[finish]\nstar_strength = 1.5\n", r"\[finish\] star_strength"),
+    ("[finish]\ngamma = nan\n", "finite"),
+    ("[stretch]\nasinh = inf\n", "finite"),
+    ("[stack]\nkeep_fwhm = nan\n", "finite"),
+    ('[deconv]\npsf = "nan"\n', "psf"),
+    ('[color]\nsensor = \'Sony "IMX"\'\n', "double quote"),
+])
+def test_values_out_of_range_are_config_errors(tmp_path, text, match):
+    write(tmp_path, text)
+    with pytest.raises(config.ConfigError, match=match):
+        config.resolve(tmp_path)
+
+
+def test_flags_are_range_checked_too(tmp_path):
+    with pytest.raises(config.ConfigError, match="finite"):
+        settings(tmp_path, "finish", "--gamma", "nan")
+    with pytest.raises(config.ConfigError, match=r"\[finish\] mid"):
+        settings(tmp_path, "finish", "--mid", "1.5")
+
+
+def test_every_shipped_preset_and_example_is_accepted(tmp_path):
+    for cam in config.preset_names("cameras"):
+        for look in config.preset_names("looks"):
+            config.resolve(tmp_path, None, {("target", "camera"): cam, ("target", "look"): look})
+    examples = Path(__file__).resolve().parent.parent / "examples"
+    for ex in sorted(examples.glob("*.toml")):
+        config.resolve(tmp_path, ex)
+    assert len(list(examples.glob("*.toml"))) >= 2
+    # the extremes of the documented ranges
+    write(tmp_path, "[finish]\nmid = 0.5\nblack = 0\ncore = 0\nsharpen = 0\nstar_strength = 1\nyb = 1\n"
+                    "erode = 0\n[denoise]\nstrength = 0\n[stretch]\nasinh = 1000\nsat = 0\n")
+    config.resolve(tmp_path)
+
+
+# --- camera presets: [camera], [filters] and [darks]
+
+@pytest.mark.parametrize("text,match", [
+    ('[camera]\nsubglob = "Light_*.fit"\n', r"unknown key \[camera\] subglob; known: name"),
+    ('[darks]\nglobb = "*.fit"\n', r"unknown key \[darks\] globb"),
+    ('[darks]\nfilename = "MasterDark_(?P<x\\\\d+"\n', "not a valid regular expression"),
+    ('[camera]\nbayer = 1\n', r"\[camera\] bayer should be a string"),
+    ('[filters]\nIRCUT = 3\n', r"\[filters\] IRCUT should be a string"),
+    ('camera = "x"\n', r"\[camera\] should be a table"),
+])
+def test_camera_preset_errors_are_clear(tmp_path, text, match):
+    (tmp_path / "cam.toml").write_text(text)
+    write(tmp_path, '[target]\ncamera = "cam.toml"\n')
+    with pytest.raises(config.ConfigError, match=match):
+        config.resolve(tmp_path)
+
+
+def test_a_bad_dark_filename_regex_is_a_stage_error_not_re_error(tmp_path):
+    from darkroom import darks, tools
+    (tmp_path / "MasterDark_1.fit").write_bytes(b"x")
+    with pytest.raises(tools.StageError, match="not a valid regular expression"):
+        darks.read_dark(tmp_path / "MasterDark_1.fit", "MasterDark_(")
+    with pytest.raises(tools.StageError, match="not a valid regular expression"):
+        darks.scan_library(tmp_path, {"glob": "*.fit", "filename": "("})

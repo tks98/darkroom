@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 from collections import namedtuple
@@ -38,6 +39,8 @@ environment (defaults for this platform, {"macOS" if tools.is_macos() else "Linu
                             (default: the newest StarNet2 installed by `darkroom get-starnet`)
   DARKROOM_SIRIL_CACHE      write fallback star catalogues here instead of the folder named in
                             Siril's log (for testing)
+  DARKROOM_DEBUG            1 shows the Python traceback of an unexpected error instead of a
+                            one-line message
 """
 
 
@@ -151,7 +154,7 @@ def _work(o):
 
 def _stack_args(o, run=False):
     o.add("--subs", type=Path, key=("target", "subs"), metavar="DIR",
-          help="directory with the light subs (*.fit; other files ignored)")
+          help="directory with the light subs (FITS: *.fit, *.fits or *.fts; other files ignored)")
     g = o.group(o.parser.add_mutually_exclusive_group())
     g.add("--dark", key=("target", "dark"), metavar="PATH",
           help='master dark, or a folder of raw darks to stack into one; also "auto" (pick from the dark '
@@ -448,9 +451,9 @@ def _lights_survey(subs: Path, glob: str):
     from . import darks
     if not subs.is_dir():
         raise tools.StageError(f"subs directory not found: {subs}")
-    files = darks.list_subs(subs, glob) or darks.list_subs(subs, "*.fit")
+    files = darks.list_subs(subs, glob) or darks.list_subs(subs, "*.fit")    # "*.fit": every FITS file
     if not files:
-        raise tools.StageError(f"no *.fit files in {subs}")
+        raise tools.StageError(f"no FITS files (*.fit, *.fits, *.fts) in {subs}")
     return darks.survey(files)
 
 
@@ -479,24 +482,23 @@ def _stack_table(s: config.Settings, work: Path | None = None) -> dict:
                                    + ", ".join(f"{e:g} s" for e in sv.exposures)
                                    + "); stack them separately or give one master dark with --dark")
         dark = darks.select_dark(Path(t["dark_library"]).expanduser(), s.camera_meta["darks"], sv.exposure,
-                                 sv.gain, sv.temp_median, log=lambda m: print(m, flush=True))
+                                 sv.gain, sv.temp_median, log=lambda m: print(m, flush=True), lights=sv)
         dark = dark.resolve()
     else:
         dark = Path(t["dark"]).expanduser().resolve()
-    picked = t["dark"] == "auto"            # select_dark has checked exposure, gain and temperature
+    picked = t["dark"] == "auto"            # select_dark has matched exposure, gain and temperature
     sources = {k: None if t[k] == "none" else Path(t[k]).expanduser().resolve() for k in ("bias", "flats")}
     cal = calib.Calibration(dark=dark)
-    if dark is not None and not picked or any(sources.values()):
+    if dark is not None or any(sources.values()):
         say = lambda m: print(m, flush=True)
         if sv is None and subs.is_dir():    # subs not there: stack() says so, or run keeps the stack
             try:
                 sv = _lights_survey(subs, glob)
             except tools.StageError as e:
                 say(f"WARNING: cannot check the calibration frames against the lights: {e}")
-        cal = calib.prepare(work, sv, dark=None if picked else dark, bias=sources["bias"],
-                            flats=sources["flats"], log=say)
-        if picked:
-            cal.dark, cal.bias = dark, None
+        # a picked dark is checked too (size, Bayer pattern), like one given by name
+        cal = calib.prepare(work, sv, dark=dark, bias=sources["bias"], flats=sources["flats"], log=say,
+                            dark_matched=picked)
     table = {"subs": subs, "dark": cal.dark, "bias": cal.bias, "flats": cal.flats, "sub_glob": glob,
              **s["stack"]}
     if table["mosaic"] and table["framing"] != "max":
@@ -505,6 +507,62 @@ def _stack_table(s: config.Settings, work: Path | None = None) -> dict:
                   "ignored: a mosaic is always stacked with framing max", flush=True)
         table["framing"] = "max"
     return table
+
+
+_STACK_KEYS = ("subs", "framing", "keep_fwhm", "keep_round", "keep_bkg", "keep_stars", "mosaic", "mosaic_crop")
+
+
+def _expected_master(work: Path, kind: str, value: str, gone: list) -> str:
+    """The master file a [target] dark, bias or flats path gives, as the stack record holds it,
+    decided without reading it; a path that is not there is added to ``gone``."""
+    from . import calib
+    src = Path(value).expanduser().resolve()
+    if not src.exists():
+        gone.append(f"the {calib.WHAT[kind]} {src}")
+    return str(calib.master_path(work, kind)) if calib._was_folder(work, kind, src) else str(src)
+
+
+def _unavailable_but_unchanged(s: config.Settings, work: Path, old: dict | None) -> str | None:
+    """When the stack's inputs cannot be read (subs folder, dark library or calibration frames
+    not there) but the settings are those the recorded stack was made with: what is missing.
+    Otherwise None, and the stack must not be kept."""
+    t = s["target"]
+    if old is None or not t["subs"] or not t["dark"]:
+        return None
+    work = Path(work).expanduser().resolve()
+    subs = Path(t["subs"]).expanduser().resolve()
+    gone = [] if subs.is_dir() else [f"the subs folder {subs}"]
+    want = {}
+    if t["dark"] == "none":
+        want["dark"] = "none"
+    elif t["dark"] == "auto":
+        if not t["dark_library"] or old.get("dark", "none") == "none":
+            return None
+        lib = Path(t["dark_library"]).expanduser().resolve()
+        if not lib.is_dir():
+            gone.append(f"the dark library {lib}")
+        want["dark"] = old["dark"]                  # whichever the library gave; picked again once readable
+        if not Path(old["dark"]).is_file():
+            gone.append(f"the dark {old['dark']}")
+    else:
+        want["dark"] = _expected_master(work, "dark", t["dark"], gone)
+    for kind in ("bias", "flats"):
+        want[kind] = None if t[kind] == "none" else _expected_master(work, kind, t[kind], gone)
+    if want["dark"] != "none":
+        want["bias"] = None                         # the dark contains the bias: not in the record
+    if (old.get("dark", "none"), old.get("bias"), old.get("flats")) != (want["dark"], want["bias"],
+                                                                        want["flats"]):
+        return None
+    try:
+        now = stages.result_params("stack", {"subs": subs, "dark": None, "bias": None, "flats": None,
+                                             "focal": s["color"]["focal"], "pixel": s["color"]["pixel"],
+                                             **s["stack"],
+                                             **({"framing": "max"} if s["stack"]["mosaic"] else {})})
+    except (OSError, tools.StageError):
+        return None
+    if any(old.get(k) != now.get(k) for k in _STACK_KEYS):
+        return None
+    return " and ".join(gone) or None
 
 
 def _starnet_dir(s: config.Settings):
@@ -568,9 +626,9 @@ def _init(a) -> None:
     subs = a.subs.expanduser().resolve()
     if not subs.is_dir():
         raise tools.StageError(f"subs directory not found: {subs}")
-    every = darks.list_subs(subs, "*.fit") or darks.list_subs(subs, "*.fits")
+    every = darks.list_subs(subs, "*.fit")          # every FITS file: .fit, .fits, .fts, any case
     if not every:
-        raise tools.StageError(f"no *.fit files in {subs}")
+        raise tools.StageError(f"no FITS files (*.fit, *.fits, *.fts) in {subs}")
     notes = []
 
     camera, how = a.camera, "given"
@@ -582,15 +640,15 @@ def _init(a) -> None:
                          "(check [color] sensor, filter, focal and pixel)")
     explicit = {}
     if camera:
-        explicit[("target", "camera")] = camera
-    explicit[("target", "look")] = a.look
+        explicit[("target", "camera")] = _preset_arg(camera)
+    explicit[("target", "look")] = _preset_arg(a.look)
     base = config.resolve(work, None, {k: v for k, v in explicit.items()}, use_file=False)
     meta = base.camera_meta
 
     glob = meta["camera"]["sub_glob"]
     files = darks.list_subs(subs, glob)
     if not files:
-        notes.append(f"no file in the subs folder matches {glob}; using every .fit file")
+        notes.append(f"no file in the subs folder matches {glob}; using every FITS file")
         files, glob = every, "*.fit"
     sv = darks.survey(files)
 
@@ -624,7 +682,8 @@ def _init(a) -> None:
         ordered[("target", "dark_library")] = str(lib)
         picked = []
         try:
-            d = darks.select_dark(lib, meta["darks"], sv.exposure, sv.gain, sv.temp_median, log=picked.append)
+            d = darks.select_dark(lib, meta["darks"], sv.exposure, sv.gain, sv.temp_median, log=picked.append,
+                                  lights=sv)
             dark_line = f"auto, from {lib}\n" + "\n".join("                " + m for m in picked)
         except tools.StageError as e:
             dark_line = f"auto, from {lib}"
@@ -725,6 +784,14 @@ def _init(a) -> None:
     print(f"next: look over {dest.name} (crop, [starnet] dir), then `darkroom run --work {a.work}`")
 
 
+def _preset_arg(name: str) -> str:
+    """--camera / --look as written to darkroom.toml: a preset name as it is, a .toml path made
+    absolute (a relative one would later be read relative to darkroom.toml's folder)."""
+    if config.is_preset_path(name):
+        return str(Path(name).expanduser().resolve())
+    return name
+
+
 def _calibration_line(kind: str, path: Path, lights, notes: list, exposure_and_temp: bool = True) -> str:
     """Summary of calibration frames for `init`; problems go to ``notes``."""
     from . import calib
@@ -755,20 +822,15 @@ def _run(a) -> None:
             table = _stack_table(s, a.work)
         except tools.StageError as e:
             # e.g. the dark-library or subs drive is unplugged: an existing stack made with the
-            # same subs folder and [stack] settings is kept rather than failing the whole run
-            old = stages.recorded_params(a.work, "stack")
-            t = s["target"]
-            same = False
-            if old is not None and t["subs"]:
-                now = stages.result_params("stack", {"subs": Path(t["subs"]).expanduser().resolve(),
-                                                     "dark": old.get("dark"), "bias": old.get("bias"),
-                                                     "flats": old.get("flats"), **s["stack"],
-                                                     **({"framing": "max"} if s["stack"]["mosaic"] else {})})
-                same = now == old
-            if force_all or not same or not all(p.is_file() for p in stages.outputs(a.work, "stack")):
+            # same subs folder, calibration settings and [stack] settings is kept rather than
+            # failing the whole run. Any other error (a calibration frame that does not fit the
+            # lights, a mistyped path) fails the run.
+            gone = (None if force_all or not all(p.is_file() for p in stages.outputs(a.work, "stack"))
+                    else _unavailable_but_unchanged(s, a.work, stages.recorded_params(a.work, "stack")))
+            if not gone:
                 raise
-            print(f"-- stack: kept as it is; its calibration frames cannot be checked ({str(e).splitlines()[0]})",
-                  flush=True)
+            print(f"-- stack: kept as it is; {gone} cannot be read, so the stack cannot be checked "
+                  f"({str(e).splitlines()[0]})", flush=True)
             todo = todo[1:]
     times, ran_any, starnet_checked = {}, False, False
     use_starnet = stages.starnet_needed(s["finish"])
@@ -851,7 +913,23 @@ def main(argv=None) -> int:
     except tools.StageError as e:
         tools.eprint(f"darkroom {a.cmd}: error: {e}")
         return 1
+    except (OSError, ValueError, KeyError) as e:
+        # a read-only or full work directory, a value Siril cannot take, ...: a message, not a
+        # traceback (DARKROOM_DEBUG=1 shows the traceback)
+        if os.environ.get("DARKROOM_DEBUG", "").strip() not in ("", "0"):
+            raise
+        tools.eprint(f"darkroom {a.cmd}: error: {_describe(e)}")
+        return 1
     return 0
+
+
+def _describe(e: BaseException) -> str:
+    if isinstance(e, OSError) and e.filename is not None:
+        what = e.strerror or type(e).__name__
+        return f"{what}: {e.filename}" + (f" -> {e.filename2}" if e.filename2 else "")
+    if isinstance(e, KeyError) and e.args:
+        return str(e.args[0])
+    return str(e) or type(e).__name__
 
 
 if __name__ == "__main__":

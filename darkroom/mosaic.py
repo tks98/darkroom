@@ -253,11 +253,31 @@ def valid_box(valid: np.ndarray, coarse: int = 400) -> tuple[int, int, int, int]
     return x0, y0, x1 - x0, y1 - y0
 
 
-def valid_mask(data: np.ndarray) -> np.ndarray:
-    """Pixels with data in every channel: Siril leaves the parts of a -maximize canvas no
-    frame covered at exactly 0. ``data`` is (H, W) or (C, H, W) as astropy reads it."""
+MAX_HOLE = 64               # pixels: a smaller patch of zeros with data all round it is not a gap
+
+
+def valid_mask(data: np.ndarray, max_hole: int = MAX_HOLE) -> np.ndarray:
+    """Pixels with data: Siril leaves the parts of a -maximize canvas no frame covered at
+    exactly 0 in every channel. ``data`` is (H, W) or (C, H, W) as astropy reads it.
+
+    Inside the covered area a single channel can also be exactly 0 (a 32-bit stack of frames
+    whose calibration clipped a dark pixel to 0 in every frame), so a pixel counts as empty
+    only when all its channels are 0 (or it is not finite), and a small empty patch with data
+    all round it (at most ``max_hole`` pixels, not touching the edge of the canvas) counts as
+    data: one such pixel would otherwise cut the crop in half."""
     d = data if data.ndim == 3 else data[None]
-    return (np.isfinite(d) & (d != 0)).all(axis=0)
+    empty = ~np.isfinite(d).all(axis=0) | (d == 0).all(axis=0)
+    if max_hole > 0 and empty.any() and not empty.all():
+        from scipy import ndimage
+        labels, n = ndimage.label(empty)
+        if n:
+            sizes = np.bincount(labels.ravel(), minlength=n + 1)
+            edge = np.unique(np.concatenate([labels[0], labels[-1], labels[:, 0], labels[:, -1]]))
+            fill = sizes <= max_hole
+            fill[0] = False
+            fill[edge] = False
+            empty &= ~fill[labels]
+    return ~empty
 
 
 def shift_wcs(header, x0: int, y0: int) -> None:
