@@ -321,6 +321,12 @@ show them that the licence will be printed and that they must type `accept`,
 and never pass `--accept-license` for them. Until then, the `cluster` look and
 `darkroom star-reduce` work without StarNet.
 
+If `get-starnet` warns that darkroom has no pinned SHA-256 for the build,
+whether to continue is also the user's decision: show them the file, size and
+SHA-256 it printed, and never pass `--allow-unpinned` for them. On macOS, a
+StarNet2 that Gatekeeper does not accept stays quarantined; `doctor` prints how
+to allow it, which is the user's decision.
+
 ### StarNet v2.0.2 is blocked by Gatekeeper
 
 The old macOS StarNet v2.0.2 is an unsigned binary. `doctor` reports the

@@ -27,8 +27,9 @@ StarNet's licence allows darkroom to run the StarNet command line, but only when
 
 - Never put StarNet, its weights or its output images in the repository, the Docker image, a test fixture or a reference result. Its licence forbids using its output to test or validate other software.
 - Never accept its licence on the user's behalf (for example by passing `--accept-license` to `darkroom get-starnet`). Show the user the terms and let them accept.
+- Never pass `--allow-unpinned` to `darkroom get-starnet` on the user's behalf; it skips the check that the download is the file StarNet's authors released.
 - The old StarNet v2.0.2 for macOS is unsigned. Whether to clear its quarantine flag is the user's decision: explain it, and never run `xattr` on it yourself.
 
 ## macOS security checks
 
-`darkroom setup` marks the apps it downloads as quarantined, as a browser would, so Gatekeeper judges them. Keep it that way: never remove a quarantine flag, never change Gatekeeper settings, and never run a quarantined binary that is not notarized (that pops a system dialog). GraXpert's Mac build is not notarized; installing it (`--allow-unnotarized` or typing `yes`) and allowing it to run are the user's decisions, not yours.
+`darkroom setup` and `darkroom get-starnet` mark what they download as quarantined, as a browser would, so Gatekeeper judges them. Keep it that way: never remove a quarantine flag, never change Gatekeeper settings, and never run a quarantined binary that is not notarized (that pops a system dialog). GraXpert's Mac build is not notarized; installing it (`--allow-unnotarized` or typing `yes`) and allowing it to run are the user's decisions, not yours.

@@ -47,7 +47,7 @@ Clearing the quarantine flag on the StarNet folder is what allows it to run:
 xattr -dr com.apple.quarantine path/to/StarNetv2CLI_MacOS
 ```
 
-`doctor` reports the flag and never clears it, and it never runs a quarantined StarNet (that would pop up the macOS warning). Until StarNet is allowed, the `cluster` look and `darkroom star-reduce` work without it, or install StarNet2 with `darkroom get-starnet`.
+`doctor` reports the flag and never clears it, and it never runs a quarantined StarNet that Gatekeeper would block, or one whose quarantine flag it cannot read (that would pop up the macOS warning). Until StarNet is allowed, the `cluster` look and `darkroom star-reduce` work without it, or install StarNet2 with `darkroom get-starnet`.
 
 ## The subs folder is read-only
 

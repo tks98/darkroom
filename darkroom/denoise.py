@@ -151,6 +151,8 @@ def run(src: Path, dst: Path, strength: float, cpu: bool, log_path: Path, log=pr
         log(f"denoise model not found at {tools.graxpert_model()}; fetching it with GraXpert "
             "(the same as `darkroom fetch-models`)")
         models.fetch_denoise_model(log_path, log)
+    from . import models
+    models.verify_denoise_model(log=log)
     model = fixed_batch_model(log_path, log)
     with fits.open(src) as hdul:
         hdr, data = hdul[0].header, hdul[0].data.astype(np.float32)

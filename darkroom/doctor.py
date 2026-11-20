@@ -684,7 +684,10 @@ def check_spcc_catalogue(work: Path | None, store=None) -> Result | None:
         return None
     image, f = found
     store = store or gaia_xp.Store()
-    pixels = gaia_xp.disc_pixels(f.ra, f.dec, gaia_xp.search_radius(f))
+    try:
+        pixels = gaia_xp.disc(f.ra, f.dec, gaia_xp.search_radius(f))
+    except tools.StageError:
+        return None
     miss = store.missing(pixels)
     if not miss:
         return Result(name, OK, f"the local copy in {store.root} covers the field of {image.name} "
@@ -698,7 +701,8 @@ def check_spcc_catalogue(work: Path | None, store=None) -> Result | None:
 # ---------------------------------------------------------------- 8. disk
 
 def count_subs(subs: Path) -> int:
-    return sum(1 for p in subs.glob("*.fit") if p.is_file())
+    from . import darks
+    return len(darks.list_subs(subs))
 
 
 def disk_need(n_subs: int) -> float:
