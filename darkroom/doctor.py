@@ -5,10 +5,13 @@ the outside world goes through ``run_cmd`` (subprocess), ``http_get`` (urllib)
 or plain filesystem calls on paths passed in, so the tests can replace them.
 
 Doctor only reports. Apart from building the cached fixed-batch denoise model on
-first use, it never changes files, settings or quarantine flags, it never executes
-StarNet when macOS has it quarantined, and it never executes a quarantined Siril or
-GraXpert that Gatekeeper would block (not notarized and not yet allowed by the user). On Linux the macOS-only
-checks (quarantine flag, Rosetta, executable architecture) are skipped.
+first use, it never changes files, settings or quarantine flags. It never executes a
+quarantined Siril, GraXpert or StarNet that Gatekeeper would block (not notarized and not
+yet allowed by the user), a program whose quarantine flag it could not read, or a StarNet2
+that an earlier get-starnet installed without a flag and Gatekeeper does not accept. On
+Linux the macOS-only checks (quarantine flag, Rosetta, executable architecture) are skipped.
+Paths under the home folder are printed as ~/... so that a pasted report does not carry the
+user name.
 """
 from __future__ import annotations
 
@@ -51,8 +54,10 @@ STARNET2_GLIBC = (2, 38)
 STARNET_SAMPLE = "rgb_test.tif"
 QUARANTINE = "com.apple.quarantine"
 
+# tapvizier.u-strasbg.fr, VizieR's older name, is a DNS alias of the first host; its certificate
+# names both, so it is probed over https too.
 VIZIER_URLS = ["https://tapvizier.cds.unistra.fr/TAPVizieR/tap/availability",
-               "http://tapvizier.u-strasbg.fr/TAPVizieR/tap/availability"]
+               "https://tapvizier.u-strasbg.fr/TAPVizieR/tap/availability"]
 ESA_URLS = ["https://gea.esac.esa.int/tap-server/tap/availability"]
 HTTP_TIMEOUT = 6.0
 USER_AGENT = "darkroom-doctor"
@@ -226,17 +231,17 @@ def _gatekeeper(name: str, exe: Path, run: Callable, system: str | None) -> tupl
     system = sys.platform if system is None else system
     if system != "darwin":
         return None, ""
-    value = toolset.quarantine_value(exe, run)
-    if value is None:
-        return None, ""
-    if toolset.user_approved(value):
-        return None, "; quarantined, allowed by you"
+    v = toolset.judge([exe], run)
+    if v.runnable:
+        return None, (f"; {v.note}" if v.note else "")
+    if v.reason == "unknown":
+        return Result(name, FAIL, f"{exe}: could not read its quarantine flag ({v.detail}); doctor did not "
+                      "execute it", f"check that `xattr -p {toolset.QUARANTINE} '{exe}'` works in Terminal, then "
+                      "run doctor again"), ""
     target = toolset.bundle_of(exe)
-    ok, source = toolset.assess(target, run)
-    if ok:
-        return None, f"; quarantined, accepted by Gatekeeper: {source}"
-    return Result(name, FAIL, f"{exe}: quarantined by macOS and not notarized ({source or 'rejected by Gatekeeper'}); "
-                  "Gatekeeper will block it; doctor did not execute it", toolset.allow_instructions(target)), ""
+    hint = None if target.suffix == ".app" else f"'{exe}'"
+    return Result(name, FAIL, f"{exe}: quarantined by macOS and not notarized ({v.detail}); "
+                  "Gatekeeper will block it; doctor did not execute it", toolset.allow_instructions(target, hint)), ""
 
 
 def check_siril(path: Path | None = None, run: Callable = run_cmd, system: str | None = None) -> Result:
@@ -314,10 +319,18 @@ MODEL_FIX = (f"run `darkroom fetch-models` (GraXpert downloads AI model {MODEL_V
 
 
 def check_model(path: Path | None = None) -> Result:
+    """GraXpert's denoise model 3.0.2, checked by its pinned size and SHA-256."""
+    from . import models
     p = path or tools.graxpert_model()
     if not p.is_file():
         return Result("denoise model", FAIL, f"not found: {p}", MODEL_FIX)
-    return Result("denoise model", OK, f"{p} ({p.stat().st_size / 1e6:.0f} MB)")
+    problem = models.denoise_model_problem(p)
+    if problem:
+        return Result("denoise model", FAIL, problem,
+                      f"delete it and run `darkroom fetch-models` (GraXpert downloads model {MODEL_VERSION} "
+                      f"again), or set DARKROOM_GRAXPERT_MODEL to GraXpert's {MODEL_VERSION} model.onnx")
+    return Result("denoise model", OK, f"{p} ({p.stat().st_size / 1e6:.0f} MB, model {MODEL_VERSION}, "
+                  "size and SHA-256 match)")
 
 
 DECONV_FIX = ("run `darkroom fetch-models --deconv` (GraXpert downloads its object deconvolution model 1.0.1), "
@@ -357,6 +370,12 @@ def check_gpu(model_path: Path | None = None, ort=None, build: Callable | None =
     src = model_path or tools.graxpert_model()
     if not src.is_file():
         return Result(name, FAIL, "not run: GraXpert denoise model missing", MODEL_FIX)
+    if build is None:               # the real fixed-batch build: only from the pinned model
+        from . import models
+        try:
+            models.verify_denoise_model(src)
+        except tools.StageError as e:
+            return Result(name, FAIL, f"not run: {e}".splitlines()[0][:300], MODEL_FIX)
     if ort is None:
         import onnxruntime as ort
     try:
@@ -434,14 +453,6 @@ def check_gpu(model_path: Path | None = None, ort=None, build: Callable | None =
 
 # ---------------------------------------------------------------- 6. starnet
 
-def is_quarantined(p: Path, run: Callable = run_cmd) -> bool:
-    try:
-        rc, _ = run(["xattr", "-p", QUARANTINE, str(p)], timeout=5)
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    return rc == 0
-
-
 def _arch_check(exe: Path, run: Callable) -> tuple[Result | None, list[str]]:
     """macOS only: an x86_64-only executable needs a working Rosetta 2."""
     try:
@@ -460,14 +471,13 @@ def _arch_check(exe: Path, run: Callable) -> tuple[Result | None, list[str]]:
     return None, []
 
 
-def _quarantine_check(folder: Path, files: list[Path], run: Callable) -> Result | None:
-    flagged = [str(p.relative_to(folder)) for p in files if is_quarantined(p, run)]
-    if flagged:
-        return Result("starnet", FAIL,
-                      f"quarantined by macOS ({', '.join(flagged)}); Gatekeeper will block it; doctor did not execute it",
-                      f"allowing it is your decision; this clears the flag for the folder: "
-                      f"xattr -dr {QUARANTINE} '{folder}'")
-    return None
+def _quarantine_check(folder: Path, exe: Path, run: Callable) -> tuple[Result | None, list[str]]:
+    """macOS: (FAIL, []) when StarNet must not be executed (see starnet.gatekeeper), else (None, notes)."""
+    from . import starnet as sn
+    g = sn.gatekeeper(folder, exe, run, system="darwin", who="doctor")
+    if g.problem:
+        return Result("starnet", FAIL, g.problem, g.fix), []
+    return None, [g.note] if g.note else []
 
 
 def parse_machine_info(text: str) -> dict | None:
@@ -515,10 +525,10 @@ def _check_starnet2(folder: Path, where: str, run_sample: bool, run: Callable, s
         if bad:
             return bad
         notes += more
-        libs = sorted(folder.glob("*.dylib")) + sorted((folder / "lib").glob("*.dylib"))
-        bad = _quarantine_check(folder, [exe, *libs], run)
+        bad, more = _quarantine_check(folder, exe, run)
         if bad:
             return bad
+        notes += more
     glibc_fix = ""
     if system.startswith("linux"):
         g = glibc_version()
@@ -589,9 +599,10 @@ def check_starnet(flag: str | None = None, run_sample: bool = False, run: Callab
         bad, notes = _arch_check(exe, run)
         if bad:
             return bad
-        bad = _quarantine_check(folder, [exe, *sorted(folder.glob("*.dylib"))], run)
+        bad, more = _quarantine_check(folder, exe, run)
         if bad:
             return bad
+        notes = notes + more
     if not run_sample:
         return Result(name, OK, f"{folder} (StarNet v2 starnet++; {', '.join(notes + ['not executed; --run-starnet runs it'])})")
     sample = folder / STARNET_SAMPLE
@@ -753,7 +764,9 @@ def run_checks(args) -> list[Result]:
         try:
             return fn()
         except Exception as e:       # a bug in one check must not hide the others
-            return Result(name, FAIL, f"check crashed: {type(e).__name__}: {e}", "please report this")
+            return Result(name, FAIL, f"check crashed: {type(e).__name__}: {e}",
+                          "please report this at https://github.com/tks98/darkroom/issues with this line "
+                          "(doctor shows paths in your home folder as ~)")
 
     with ThreadPoolExecutor(max_workers=len(jobs)) as ex:
         futs = [ex.submit(safe, n, f) for n, f in jobs]
@@ -782,7 +795,30 @@ def _config_deconv_on(work: Path | None) -> bool:
         return False
 
 
+def tilde(text: str | None, home: str | None = None) -> str | None:
+    """Paths under the home folder written as ~/..., so a pasted report does not carry the user
+    name. Quoted paths stay usable in a shell: '/home/u/a b' becomes ~/'a b'."""
+    if not text:
+        return text
+    homes = [home] if home else list(dict.fromkeys(h for h in (os.path.expanduser("~"),
+                                                              os.path.realpath(os.path.expanduser("~")))
+                                                   if h and h != "/"))
+    for h in homes:
+        h = h.rstrip("/")
+        esc = re.escape(h)
+        for q in ("'", '"'):
+            text = re.sub(q + esc + "/", "~/" + q, text)
+            text = re.sub(q + esc + q, "~", text)
+        text = re.sub(r"(?<![\w/~.-])" + esc + r"(?![\w-]|\.\w)", "~", text)
+    return text
+
+
+def redacted(r: Result) -> Result:
+    return Result(r.name, r.status, tilde(r.detail), tilde(r.fix))
+
+
 def format_table(results: list[Result]) -> str:
+    results = [redacted(r) for r in results]
     w = max((len(r.name) for r in results), default=0)
     lines = [f"{r.status:<4}  {r.name:<{w}}  {r.detail}" for r in results]
     fixes = [r for r in results if r.status != OK and r.fix]
@@ -825,7 +861,7 @@ def _add_args(p: argparse.ArgumentParser) -> None:
 def run_args(args) -> int:
     results = run_checks(args)
     if args.json:
-        print(json.dumps([asdict(r) for r in results], indent=2))
+        print(json.dumps([asdict(redacted(r)) for r in results], indent=2))
     else:
         print(format_table(results))
         if args.offline:

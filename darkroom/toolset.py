@@ -14,6 +14,7 @@ import os
 import platform as _platform
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -200,13 +201,32 @@ def _run(cmd: list[str], timeout: float = 30) -> tuple[int, str]:
     return p.returncode, p.stdout.decode(errors="replace")
 
 
-def quarantine_value(p: Path, run: Callable = _run) -> str | None:
-    """The com.apple.quarantine value of p, or None when it has none."""
+def quarantine_stamp(now: float | None = None) -> str:
+    """The value a browser writes: flags 0081 (downloaded; not approved), time in hex, agent name."""
+    return f"0081;{int(time.time() if now is None else now):08x};darkroom;"
+
+
+def quarantine_probe(p: Path, run: Callable = _run) -> tuple[str, str]:
+    """("set", value), ("none", "") or ("unknown", why). An xattr that cannot be run, times out or
+    fails for any reason other than a missing attribute gives "unknown", never "not quarantined"."""
     try:
         rc, out = run(["xattr", "-p", QUARANTINE, str(p)], timeout=5)
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    return out.strip() if rc == 0 else None
+    except subprocess.TimeoutExpired:
+        return "unknown", "xattr did not answer within 5 s"
+    except OSError as e:
+        return "unknown", f"could not run xattr: {e}"
+    if rc == 0:
+        return "set", out.strip()
+    if "no such xattr" in out.lower():
+        return "none", ""
+    last = out.strip().splitlines()[-1][:160] if out.strip() else "no output"
+    return "unknown", f"xattr -p exited {rc}: {last}"
+
+
+def quarantine_value(p: Path, run: Callable = _run) -> str | None:
+    """The com.apple.quarantine value of p, or None when it has none or it cannot be read."""
+    state, value = quarantine_probe(p, run)
+    return value if state == "set" else None
 
 
 def user_approved(value: str) -> bool:
@@ -225,10 +245,21 @@ def bundle_of(exe: Path) -> Path:
     return exe
 
 
+def assess_command(target: Path) -> list[str]:
+    """spctl's assessment of an app bundle, or of a bare executable or library. `-t exec` rejects
+    every non-bundle ("does not seem to be an app"), notarized or not, so those are assessed by
+    their own signature, which is what Gatekeeper checks when a quarantined command-line program
+    starts."""
+    if target.suffix == ".app":
+        return ["spctl", "-a", "-t", "exec", "-vv", str(target)]
+    return ["spctl", "-a", "-t", "open", "--context", "context:primary-signature", "-vv", str(target)]
+
+
 def assess(target: Path, run: Callable = _run) -> tuple[bool, str]:
-    """(accepted, source) from `spctl -a -t exec -vv`; source is e.g. 'Notarized Developer ID'."""
+    """(accepted, source) from spctl; source is e.g. 'Notarized Developer ID'. When spctl cannot be
+    run the answer is not accepted."""
     try:
-        rc, out = run(["spctl", "-a", "-t", "exec", "-vv", str(target)], timeout=120)
+        rc, out = run(assess_command(target), timeout=120)
     except (OSError, subprocess.TimeoutExpired) as e:
         return False, f"spctl failed: {e}"
     source = ""
@@ -241,24 +272,73 @@ def assess(target: Path, run: Callable = _run) -> tuple[bool, str]:
     return rc == 0, source
 
 
-def allow_instructions(app: Path) -> str:
-    return ("Allowing it is your decision. Either open it once in Finder (it will be blocked), then go to "
+def allow_instructions(app: Path, run_hint: str | None = None) -> str:
+    """How the user can allow a quarantined program. run_hint: a command line that starts it, for
+    programs that are not app bundles."""
+    first = (f"run it once yourself in Terminal ({run_hint}; macOS will block it)" if run_hint
+             else "open it once in Finder (it will be blocked)")
+    return (f"Allowing it is your decision. Either {first}, then go to "
             "System Settings > Privacy & Security and click Open Anyway; or clear the quarantine flag "
             f"yourself with: xattr -dr {QUARANTINE} '{app}'")
 
 
+@dataclass(frozen=True)
+class Verdict:
+    """Gatekeeper's view of a set of files: whether they can be executed without macOS blocking them."""
+    runnable: bool
+    reason: str = ""                    # "", "unknown" (a flag could not be read) or "blocked"
+    detail: str = ""                    # unknown: why; blocked: spctl's answer
+    files: tuple = ()                   # the files concerned
+    note: str = ""                      # runnable: e.g. "quarantined, allowed by you"
+
+
+def judge(files: list[Path], run: Callable = _run) -> Verdict:
+    """Read each file's quarantine flag and assess with spctl those that are quarantined and not yet
+    allowed by the user. Runnable only when every flag could be read and Gatekeeper accepts every
+    quarantined file."""
+    unknown, pending, notes = [], [], []
+    for f in files:
+        state, value = quarantine_probe(f, run)
+        if state == "unknown":
+            unknown.append((f, value))
+        elif state == "set":
+            if user_approved(value):
+                notes.append("quarantined, allowed by you")
+            else:
+                pending.append(f)
+    if unknown:
+        return Verdict(False, "unknown", "; ".join(why for _, why in unknown), tuple(f for f, _ in unknown))
+    rejected = []
+    for f in pending:
+        ok, source = assess(bundle_of(f), run)
+        if ok:
+            notes.append(f"quarantined, accepted by Gatekeeper: {source}")
+        else:
+            rejected.append((f, source))
+    if rejected:
+        return Verdict(False, "blocked", rejected[0][1] or "rejected", tuple(f for f, _ in rejected))
+    return Verdict(True, note="; ".join(dict.fromkeys(notes)))
+
+
+def unknown_message(path: Path, why: str, who: str = "darkroom") -> str:
+    return (f"could not tell whether macOS has quarantined {path} ({why}), so {who} did not run it: "
+            "a quarantined program that is not notarized makes macOS show a blocking dialog. Check that "
+            f"`xattr -p {QUARANTINE} '{path}'` works in Terminal, then try again")
+
+
 def gatekeeper_block(exe: Path, run: Callable = _run, system: str | None = None) -> str | None:
     """macOS only: a message when exe is quarantined, not yet allowed by the user and not accepted by
-    Gatekeeper (so running it would be blocked with a system dialog); None when it can run."""
+    Gatekeeper (so running it would be blocked with a system dialog), or when its quarantine flag
+    cannot be read; None when it can run."""
     system = sys.platform if system is None else system
     if system != "darwin":
         return None
-    value = quarantine_value(exe, run)
-    if value is None or user_approved(value):
+    v = judge([exe], run)
+    if v.runnable:
         return None
+    if v.reason == "unknown":
+        return unknown_message(exe, v.detail)
     target = bundle_of(exe)
-    ok, source = assess(target, run)
-    if ok:
-        return None
-    return (f"{target} is quarantined by macOS and not notarized by Apple ({source or 'rejected'}), so "
-            f"Gatekeeper will block it; darkroom did not run it. {allow_instructions(target)}")
+    hint = None if target.suffix == ".app" else f"'{exe}'"
+    return (f"{target} is quarantined by macOS and not notarized by Apple ({v.detail}), so "
+            f"Gatekeeper will block it; darkroom did not run it. {allow_instructions(target, hint)}")
