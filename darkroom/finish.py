@@ -111,11 +111,26 @@ def star_layer(stars, gamma, star_strength, erode=0):
     return s ** gamma * star_strength
 
 
+SKY_FALLBACK_PCT = 5      # no sky pixel: the sky colour comes from the faintest 5% of the mask
+
+
 def neutralize(out, gm, log=print):
     """Shift the channels so the sky is grey. The sky colour is the per-channel median of every
     pixel outside the target mask. (Do not pre-select the darker pixels: that picks, per pixel,
-    the moments where the noisiest channel dipped, and reports a colour cast that is not there.)"""
-    skypx = gm[..., 0] < 0.01
+    the moments where the noisiest channel dipped, and reports a colour cast that is not there.)
+    When no pixel is outside the mask (a nebula that fills the frame), the faintest
+    SKY_FALLBACK_PCT percent of the (smooth) mask stand in for the sky; when the mask is 1
+    everywhere, neutralisation is skipped."""
+    m = gm[..., 0]
+    skypx = m < 0.01
+    if not skypx.any():
+        lo = float(np.percentile(m, SKY_FALLBACK_PCT))
+        if not lo < 1:
+            log("neutral: no part of the image counts as sky; sky neutralisation skipped")
+            return out
+        skypx = m <= lo
+        log(f"neutral: no pixel is outside the target mask; using the faintest {SKY_FALLBACK_PCT}% "
+            f"of the mask ({int(skypx.sum())} pixels) as the sky")
     bg = np.median(out[skypx], axis=0)
     out = np.clip(out - (bg - bg.mean()), 0, 1)
     log(f"sky RGB before neutralization {bg.round(4)}")
@@ -199,6 +214,14 @@ def aspect_box(width: int, height: int, aspect: tuple[int, int], center: tuple[i
     return x0, y0, w, h
 
 
+def sky_sigma(L, sky):
+    """Noise of the sky: 1.4826 x the MAD of the fainter 60% of ``L`` around ``sky``, at least
+    1e-3 (also when there is no fainter pixel, in an image of one level)."""
+    faint = L[L < np.percentile(L, 60)]
+    s = 1.4826 * np.median(np.abs(faint - sky)) if faint.size else 0.0
+    return max(s, 1e-3) if np.isfinite(s) else 1e-3
+
+
 def keep_stars(orig, p: FinishParams):
     """Finish without star removal, for targets that are made of stars (clusters): black point,
     midtone and saturation on the whole image. The star and galaxy settings do not apply."""
@@ -207,8 +230,7 @@ def keep_stars(orig, p: FinishParams):
     g = saturate(g, p.sat)
     L = g.mean(-1)
     sky = np.median(L)
-    sky_sig = 1.4826 * np.median(np.abs(L[L < np.percentile(L, 60)] - sky))
-    return g, galaxy_mask(L, sky, max(sky_sig, 1e-3))
+    return g, galaxy_mask(L, sky, sky_sigma(L, sky))
 
 
 def recombine(orig, sl, p: FinishParams, log=print):
@@ -225,8 +247,7 @@ def recombine(orig, sl, p: FinishParams, log=print):
 
     L = g.mean(-1)
     sky = np.median(L)                                     # most of the frame is sky
-    sky_sig = 1.4826 * np.median(np.abs(L[L < np.percentile(L, 60)] - sky))
-    gm = galaxy_mask(L, sky, max(sky_sig, 1e-3))
+    gm = galaxy_mask(L, sky, sky_sigma(L, sky))
 
     g = compress_core(g, p.core)
 
@@ -234,9 +255,13 @@ def recombine(orig, sl, p: FinishParams, log=print):
         # opponent axis: yb = (R+G)/2 - B ; push it away from its galaxy median
         yb = (g[..., 0] + g[..., 1]) / 2 - g[..., 2]
         w = gm[..., 0]
-        ref = np.median(yb[w > 0.5])
-        d = (yb - ref) * (p.yb - 1) * w                     # extra yellow(+)/blue(-) shift
-        g = np.clip(g + np.stack([d / 3, d / 3, -2 * d / 3], -1), 0, 1)
+        inside = w > 0.5
+        if inside.any():
+            ref = np.median(yb[inside])
+            d = (yb - ref) * (p.yb - 1) * w                 # extra yellow(+)/blue(-) shift
+            g = np.clip(g + np.stack([d / 3, d / 3, -2 * d / 3], -1), 0, 1)
+        else:
+            log("yb: no pixel is inside the target mask; yellow/blue contrast skipped")
 
     if p.sharpen > 0:
         L = g.mean(-1, keepdims=True)
@@ -273,7 +298,16 @@ def _crop_out(out, ref, p: FinishParams, log, ref_name: str):
     return out
 
 
+def check_finite(out) -> None:
+    """Refuse to save an image with NaN or infinite pixels (they would be written as garbage)."""
+    bad = int(np.count_nonzero(~np.isfinite(out)))
+    if bad:
+        raise ValueError(f"the finished image has {bad} NaN or infinite value(s) "
+                         f"({bad / out.size:.1%}); nothing was saved")
+
+
 def save(out, base: Path, log=print):
+    check_finite(out)
     tifffile.imwrite(str(base) + ".tif", (out * 65535 + 0.5).astype(np.uint16), photometric="rgb")
     Image.fromarray((out * 255 + 0.5).astype(np.uint8)).save(str(base) + ".jpg", quality=95)
     log(f"saved {base}.tif/.jpg {out.shape}")

@@ -99,7 +99,7 @@ def config_dir() -> Path:
 
 @contextlib.contextmanager
 def scratch_config(source: Path | None = None):
-    """A throwaway copy of the user's Siril settings, for ``run_script(initfile=...)``.
+    """A throwaway copy of the user's Siril settings (what run_script uses by default).
 
     siril-cli saves its settings when a script ends, so a ``set`` in a script would stay in
     the user's config.1.4.ini. Run with ``-i`` on this copy instead: Siril reads the user's
@@ -118,11 +118,25 @@ def scratch_config(source: Path | None = None):
 
 
 def run_script(script: Path, log_path: Path, initfile: Path | None = None) -> None:
-    """Run a script with siril-cli; ``initfile``: read and save settings there (``-i``)
-    instead of in the user's config.1.4.ini."""
+    """Run a script with siril-cli on a throwaway copy of the user's Siril settings.
+
+    siril-cli saves its settings when a script ends, so a ``set16bits``, ``set32bits``,
+    ``setext`` or ``set`` in a script would otherwise stay in the user's config.1.4.ini.
+    With ``-i`` Siril reads and saves the settings in the given file instead; everything
+    else in its settings folder (spcc_mirrors.json, download_cache, the SPCC database) is
+    found as before. ``initfile``: use this settings file (the caller owns it) instead of a
+    fresh copy from scratch_config()."""
+    if initfile is None:
+        with scratch_config() as cfg:
+            _run(script, log_path, cfg)
+    else:
+        _run(script, log_path, initfile)
+
+
+def _run(script: Path, log_path: Path, initfile: Path) -> None:
     exe = tools.require_executable(tools.siril_cli(), "DARKROOM_SIRIL")
     log_path.write_text("")
-    cmd = [str(exe)] + (["-i", str(initfile)] if initfile else []) + ["-s", str(script.resolve())]
+    cmd = [str(exe), "-i", str(initfile), "-s", str(script.resolve())]
     tools.run_tool(cmd, log_path)
     # siril-cli can exit 0 after a failed command; catch the common message.
     text = log_path.read_text(errors="replace")

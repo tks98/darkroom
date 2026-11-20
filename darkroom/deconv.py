@@ -17,9 +17,10 @@ from pathlib import Path
 import numpy as np
 
 from . import tools
-from .denoise import pad_for_tiles, providers
+from .denoise import check_finite, pad_for_tiles, providers
 
 WIN, STRIDE = 512, 448
+MIN_STD = 1e-6                 # below this a tile (in log space) counts as one level: left as it is
 STRENGTH_SCALE = 0.95          # GraXpert: a strength of exactly 1.0 has no effect, so it scales by 0.95
 FWHM_PER_SIGMA = 2.0 * np.sqrt(2.0 * np.log(2.0))      # 2.3548
 
@@ -39,6 +40,7 @@ def deconvolve(image, session, strength: float, fwhm_px: float, log=print):
     output = padded.copy()
     n = ith * itw
     t0 = time.time()
+    flat = 0
     for idx in range(n):
         i, j = idx % ith, idx // ith
         x, y = STRIDE * i, STRIDE * j
@@ -46,15 +48,22 @@ def deconvolve(image, session, strength: float, fwhm_px: float, log=print):
         mn = tile.min(axis=(0, 1))
         tile = np.log(tile - mn + 1e-5)
         mean, std = tile.mean(), tile.std()
-        tile = (tile - mean) / std * 0.1
-        inp = np.moveaxis(tile[None], -1, 1).reshape(C, 1, WIN, WIN).astype(np.float32)
-        res = inp - session.run(None, {"gen_input_image": inp, "params": conds})[0]
-        res = np.moveaxis(res.reshape(1, C, WIN, WIN), 1, -1)[0]
-        res = np.exp(res * std / 0.1 + mean) + mn - 1e-5
-        output[x + off:STRIDE * (i + 1) + off, y + off:STRIDE * (j + 1) + off] = \
-            res[off:off + STRIDE, off:off + STRIDE]
+        if std > MIN_STD:
+            tile = (tile - mean) / std * 0.1
+            inp = np.moveaxis(tile[None], -1, 1).reshape(C, 1, WIN, WIN).astype(np.float32)
+            res = inp - session.run(None, {"gen_input_image": inp, "params": conds})[0]
+            res = np.moveaxis(res.reshape(1, C, WIN, WIN), 1, -1)[0]
+            res = np.exp(res * std / 0.1 + mean) + mn - 1e-5
+            output[x + off:STRIDE * (i + 1) + off, y + off:STRIDE * (j + 1) + off] = \
+                res[off:off + STRIDE, off:off + STRIDE]
+        else:
+            # a tile of one level (such as an empty corner of a mosaic canvas) cannot be
+            # normalised and has nothing to sharpen: it keeps its values (output starts as a copy)
+            flat += 1
         if idx % 10 == 0 or idx == n - 1:
             log(f"  {idx + 1}/{n} tiles  {time.time() - t0:.1f}s")
+    if flat:
+        log(f"  {flat} of {n} tiles are of one level and were left as they are")
     return np.clip(output[off:H + off, off:W + off], 0, 1).astype(np.float32)
 
 
@@ -229,6 +238,7 @@ def run(src: Path, dst: Path, strength: float, psf, cpu: bool, log_path: Path, l
     t = time.time()
     out = deconvolve(img, sess, strength, fwhm, log)
     log(f"deconvolution done in {time.time() - t:.1f}s")
+    check_finite(out, "deconv")
     hdr["HISTORY"] = (f"GraXpert object deconvolution {models.DECONV_VERSION} strength {strength:g} "
                       f"psf {fwhm:.2f}px via onnxruntime {ort.__version__} {backend}")
     fits.PrimaryHDU(np.moveaxis(out, -1, 0), header=hdr).writeto(dst, overwrite=True)

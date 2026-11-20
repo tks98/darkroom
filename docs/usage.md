@@ -61,6 +61,10 @@ Flats correct vignetting and dust shadows only when they match the optical train
 
 `run` goes through the stages in order and skips any stage whose output is up to date. A stage counts as up to date when its outputs exist, are newer than its inputs, and were made with the settings now in force. So after you change a setting, run it again and only the affected stages are redone: a change to `[finish] gamma` takes about a second, while a change to `[stack]` redoes everything.
 
+The stack's record also holds the number of subs and a digest of their names, so adding or removing a sub reruns the stack, even when the new sub is dated before the last stack. Work directories stacked before this record existed stay up to date until their next real stack. Each record also holds the version of the stage's algorithm in darkroom; when a new darkroom changes how a stage computes its output, that stage and the ones after it rerun. The versions of Siril, GraXpert, onnxruntime and StarNet used are written to the records in `<work>/logs/*.params.json` for reference; they do not cause a rerun.
+
+A stack that has to run while `<work>/process` still holds the frames of the last one stops and asks for `--force`, which deletes those frames first.
+
 | Flag | Effect |
 |---|---|
 | `--to STAGE` | stop after this stage |

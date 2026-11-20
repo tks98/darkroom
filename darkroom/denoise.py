@@ -45,11 +45,28 @@ def pad_for_tiles(image, win: int, stride: int):
     return image, ith, itw, off
 
 
+MIN_MAD = 1e-6       # spread used for a channel whose MAD is 0 (more than half its pixels at one level)
+
+
+def robust_spread(sample, log=print):
+    """Per-channel median and MAD of an H x W x C sample, as GraXpert normalises the tiles.
+    A MAD of 0 (more than half the pixels at one level, such as the empty corners of a mosaic
+    canvas) would divide by zero; such a channel gets MIN_MAD. Its pixels at that level then
+    stay as they are and the others are far above the model's threshold, so denoise leaves
+    that channel practically unchanged instead of writing NaN."""
+    median = np.median(sample, axis=(0, 1))
+    mad = np.median(np.abs(sample - median), axis=(0, 1))
+    for c in np.flatnonzero(~(mad > 0)):
+        mad[c] = MIN_MAD
+        log(f"denoise: WARNING: more than half of channel {c} is at one level ({median[c]:.6g}); "
+            "it is left practically as it is")
+    return median, mad
+
+
 def denoise(image, session, strength, log=print):
     """image: H x W x 3 float32 in [0,1]. Mirrors GraXpert's tiling/normalization."""
     original = image.copy()
-    median = np.median(image[::4, ::4, :], axis=(0, 1))
-    mad = np.median(np.abs(image[::4, ::4, :] - median), axis=(0, 1))
+    median, mad = robust_spread(image[::4, ::4, :], log)
 
     H, W, _ = image.shape
     image, ith, itw, off = pad_for_tiles(image, WIN, STRIDE)
@@ -80,6 +97,14 @@ def denoise(image, session, strength, log=print):
     thr = THR / 0.04 * mad + median
     blend = np.where(original < thr, output, original)
     return np.clip(blend * strength + original * (1 - strength), 0, 1).astype(np.float32)
+
+
+def check_finite(out, stage: str) -> None:
+    """Fail clearly instead of writing NaN or infinite pixels for the next stage."""
+    bad = int(np.count_nonzero(~np.isfinite(out)))
+    if bad:
+        raise tools.StageError(f"{stage}: the result has {bad} NaN or infinite value(s) "
+                               f"({bad / out.size:.1%}); nothing was written")
 
 
 def fixed_batch_model(log_path: Path, log=print) -> Path:
@@ -143,5 +168,6 @@ def run(src: Path, dst: Path, strength: float, cpu: bool, log_path: Path, log=pr
     t = time.time()
     out = denoise(img, sess, strength, log)
     log(f"denoise done in {time.time() - t:.1f}s")
+    check_finite(out, "denoise")
     hdr["HISTORY"] = f"GraXpert denoise 3.0.2 strength {strength} via onnxruntime {ort.__version__} {backend}"
     fits.PrimaryHDU(np.moveaxis(out, -1, 0), header=hdr).writeto(dst, overwrite=True)

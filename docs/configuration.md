@@ -17,7 +17,7 @@ Unknown keys and bad values are errors that name the file and the key. Relative 
 | Key | Default | Meaning |
 |---|---|---|
 | `name` | from the FITS `OBJECT` | target name, for your own reference |
-| `subs` | none | folder with the light subs |
+| `subs` | none | folder with the light subs: the FITS files (`.fit`, `.fits` or `.fts`, any case) that match the camera preset's `sub_glob` (`Light_*.fit` for the shipped presets), or every FITS file there when none matches. Other files are ignored. darkroom links the chosen subs into `<work>/process/subs` and Siril works there, so nothing is written to this folder |
 | `dark` | none | `"auto"` to pick from `dark_library`, `"none"`, the path of a master dark, or a folder of raw darks |
 | `dark_library` | none | folder of master darks, used when `dark = "auto"` |
 | `bias` | `"none"` | the path of a master bias, or a folder of raw bias frames (flag `--bias`) |

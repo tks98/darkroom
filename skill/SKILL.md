@@ -40,9 +40,11 @@ anyway, and ask the user to look at them before you move on.
    If there is no `.venv`, run `bash <repo>/setup.sh` first.
 2. Run `darkroom doctor --work WORK --subs SUBS`. Fix every FAIL before
    processing; a WARN is information, not a blocker. See "Known failures".
-3. Survey the data before promising anything: count the `.fit` subs, read one
-   FITS header (exposure, gain, temperature, filter, Bayer pattern, target),
-   and look at a few of the camera's preview JPGs spread across the session.
+3. Survey the data before promising anything: count the FITS subs (`.fit`,
+   `.fits` or `.fts`; the stack takes the ones matching the camera's
+   `sub_glob`, else all of them), read one FITS header (exposure, gain,
+   temperature, filter, Bayer pattern, target), and look at a few of the
+   camera's preview JPGs spread across the session.
 4. Never write inside the folder that holds the user's raw subs, and never
    delete or move them. Work in a separate work directory on a disk with room:
    stacking needs about 80 MB per sub (roughly 31 GB for 400 subs).
@@ -293,7 +295,23 @@ output. If both servers are down, wait: do not skip colour calibration.
 ### `siril-cli` starts in `~/Pictures`
 
 darkroom passes absolute paths. If you write a Siril script by hand, do the
-same.
+same, and run it with `-i` on a copy of Siril's `config.1.4.ini`: siril-cli
+saves its settings when a script ends, and darkroom never changes the user's.
+
+### A stage refuses to write NaN or infinite values
+
+`denoise`, `deconv` and `finish` check their result instead of passing
+garbage on. Look at the previous stage's output first. Empty areas (a mosaic
+with `mosaic_crop = "none"`, or `framing = "max"`) are handled, but they are a
+poor input: crop the stack to the area with data and rerun. Do not work
+around the check.
+
+### The stack reruns after subs were added or removed
+
+The stack record holds the count and a digest of the selected subs' names.
+That is intended. If `WORK/process` still holds the last run's frames, the
+stack stops and asks for `--force`; ask the user before passing it, since a
+restack takes a long time.
 
 ### StarNet is not installed
 

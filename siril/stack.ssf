@@ -9,7 +9,10 @@ requires 1.4.0
 setext fit
 set16bits
 
-# 1. Link the raw .fit lights (JPGs ignored) into a sequence
+# 1. Link the raw lights into a sequence. SUBS is <work>/process/subs: darkroom
+#    puts one link there per selected sub (.fit, .fits or .fts; JPGs and files
+#    that do not match the camera's sub_glob left out), so Siril stacks exactly
+#    those and never works inside the user's folder
 cd "{{SUBS}}"
 link light "-out={{PROCESS}}"
 

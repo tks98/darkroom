@@ -11,7 +11,8 @@ requires 1.4.0
 setext fit
 set16bits
 
-# 1-2. Link the raw lights and calibrate them, as stack.ssf does (first run only)
+# 1-2. Link the raw lights (the links in <work>/process/subs) and calibrate them,
+#      as stack.ssf does (first run only)
 {{if SUBS}}cd "{{SUBS}}"
 {{if SUBS}}link light "-out={{PROCESS}}"
 cd "{{PROCESS}}"

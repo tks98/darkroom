@@ -298,9 +298,10 @@ def test_stack_table_record_and_script(tmp_path, data, fake_siril):
     cal = [l for l in fake_siril.scripts[-1].splitlines() if l.startswith("calibrate")]
     assert cal == [f'calibrate light "-dark={m}/master_dark.fit" "-flat={m}/master_flat.fit" -cc=dark 3 3 '
                    "-cfa -equalize_cfa -debayer"]
-    # without any calibration frame the record is what it always was
+    # without any calibration frame the record is what it always was (plus the selection of subs,
+    # which an older record lacks without counting as a change)
     old = stages.result_params("stack", {**table, "dark": None, "bias": None, "flats": None})
-    assert set(old) == {"subs", "dark", "framing", "keep_fwhm", "keep_round"}
+    assert set(old) == {"subs", "dark", "framing", "keep_fwhm", "keep_round", "subs_count", "subs_digest"}
 
 
 def test_run_reruns_the_stack_when_a_master_is_rebuilt(tmp_path, data, fake_siril, monkeypatch, capsys):

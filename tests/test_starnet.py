@@ -263,10 +263,11 @@ def test_read_only_subs_are_staged(tmp_path, monkeypatch):
     assert not staged.exists() and (subs / "Light_1.fit").exists()        # only the links are removed
 
 
-def test_writable_subs_are_used_directly(tmp_path, monkeypatch):
+def test_writable_subs_are_staged_too(tmp_path, monkeypatch):
     scripts = []
     _fake_siril(monkeypatch, scripts)
     subs, work = _subs(tmp_path), tmp_path / "work"
     stages.stack(work, subs, None)
-    assert f'cd "{subs.resolve()}"' in scripts[-1]
-    assert not (work / "process" / "subs").exists()
+    staged = work.resolve() / "process" / "subs"
+    assert f'cd "{staged}"' in scripts[-1] and f'cd "{subs.resolve()}"' not in scripts[-1]
+    assert sorted(p.name for p in subs.iterdir()) == ["Light_1.fit", "Light_1.jpg", "Light_2.fit"]

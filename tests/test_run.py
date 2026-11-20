@@ -302,7 +302,8 @@ def test_stack_refuses_to_mix_runs(tmp_path, monkeypatch):
         stages.stack(work, subs, tmp_path / "d.fit")
     assert (work / "process" / "pp_light_.seq").read_text() == "old" and not scripts
     stages.stack(work, subs, tmp_path / "d.fit", force=True)
-    assert list((work / "process").iterdir()) == []                   # old frames gone before Siril ran
+    # old frames gone before Siril ran; only the links to the subs are there
+    assert [p.name for p in (work / "process").iterdir()] == ["subs"]
     assert "link light" in scripts[-1]
     (work / "process" / "pp_light_.seq").write_text("new")
     stages.stack(work, subs, None, framing="max", reuse=True, out="stack_max")

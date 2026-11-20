@@ -456,7 +456,9 @@ def test_run_script_passes_the_initfile(monkeypatch, tmp_path):
     siril.run_script(s, tmp_path / "log", initfile=tmp_path / "c.ini")
     siril.run_script(s, tmp_path / "log")
     assert calls[0] == ["/bin/siril-cli", "-i", str(tmp_path / "c.ini"), "-s", str(s.resolve())]
-    assert calls[1] == ["/bin/siril-cli", "-s", str(s.resolve())]
+    # without one, every script runs on a throwaway copy of the user's settings
+    assert calls[1][:2] == ["/bin/siril-cli", "-i"] and calls[1][3:] == ["-s", str(s.resolve())]
+    assert Path(calls[1][2]).name == siril.CONFIG_FILE and not Path(calls[1][2]).exists()
 
 
 def test_config_dir_follows_the_platform(monkeypatch, tmp_path):

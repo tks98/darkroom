@@ -498,7 +498,7 @@ def _stack_table(s: config.Settings, work: Path | None = None) -> dict:
         if picked:
             cal.dark, cal.bias = dark, None
     table = {"subs": subs, "dark": cal.dark, "bias": cal.bias, "flats": cal.flats, "sub_glob": glob,
-             **s["stack"]}
+             "focal": s["color"]["focal"], "pixel": s["color"]["pixel"], **s["stack"]}
     if table["mosaic"] and table["framing"] != "max":
         if s.sources[("stack", "framing")] != "built-in":
             print(f"WARNING: [stack] framing = {table['framing']} ({s.sources[('stack', 'framing')]}) is "
@@ -764,7 +764,7 @@ def _run(a) -> None:
                                                      "dark": old.get("dark"), "bias": old.get("bias"),
                                                      "flats": old.get("flats"), **s["stack"],
                                                      **({"framing": "max"} if s["stack"]["mosaic"] else {})})
-                same = now == old
+                same = stages.same_params("stack", old, now)
             if force_all or not same or not all(p.is_file() for p in stages.outputs(a.work, "stack")):
                 raise
             print(f"-- stack: kept as it is; its calibration frames cannot be checked ({str(e).splitlines()[0]})",

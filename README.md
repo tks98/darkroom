@@ -64,9 +64,9 @@ Setup ends with `darkroom doctor`, which checks every tool and prints a fix for 
 
 ## Limitations
 
-darkroom has been tested end to end on two targets (M31 and M13) from one camera (the Seestar S30 Pro), its mosaic stacking on two mosaics from the original S30, and on one platform (macOS on Apple Silicon). Each look was made from a single image, and the cluster look from only 7.5 minutes of data.
+darkroom has been tested end to end on two targets (M31 and M13) from one camera (the Seestar S30 Pro), its mosaic stacking and the nebula look on two mosaics from the original S30, its calibration with raw darks, bias frames and flats on two targets from a ZWO ASI294MC Pro, and on one platform (macOS on Apple Silicon). Each look was made from one or two images, and the cluster look from only 7.5 minutes of data.
 
-It handles one-shot-colour data with a master dark. Flats, bias frames and mono or LRGB data are not supported. Automatic dark selection has only been tested against a library built from copies of one real master dark. Not yet tested: the CPU denoise path, installing from a wheel, `setup.sh` on a fresh machine, the LP filter mapping, and frame-selection percentages other than 90.
+It handles one-shot-colour data. The lights can be calibrated with a master dark, and with bias frames and flats, each given as a master file or a folder of raw frames (see [Configuration](docs/configuration.md#bias-flats-and-folders-of-raw-frames)). Mono and LRGB data are not supported. Automatic dark selection has only been tested against a library built from copies of one real master dark. Not yet tested: the CPU denoise path, installing from a wheel, `setup.sh` on a fresh machine, and frame-selection percentages other than 90.
 
 ## Licence
 

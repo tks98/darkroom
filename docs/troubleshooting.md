@@ -79,7 +79,11 @@ If you would rather not touch Siril's files, `defaults write com.apple.CrashRepo
 
 ## Siril settings changed after a run
 
-The Siril scripts change two settings that Siril may keep: `stack` switches processed images to 16-bit (`set16bits`), and the plate solve in `color` saves the focal length and pixel size it was given as Siril's defaults. Reset them in Siril's preferences if you use Siril for other work.
+siril-cli saves its settings when a script ends, so the `set16bits`, `set32bits` and `setext` lines in darkroom's scripts, and the focal length and pixel size of the plate solve, used to stay in Siril's preferences. darkroom now runs every Siril script on a throwaway copy of those settings (`siril-cli -i`), so your own `config.1.4.ini` is never written; Siril still finds its download cache, `spcc_mirrors.json` and the SPCC database where they are. If you ran an older darkroom, check Siril's preferences once: it may have left processed images at 16-bit, the FITS extension at `.fit`, and the focal length and pixel size of your last target.
+
+## A stage stops with NaN or infinite values
+
+`denoise`, `deconv` and `finish` check their result and refuse to write an image with NaN or infinite pixels ("the result has N NaN or infinite value(s); nothing was written"), instead of passing garbage to the next stage. Look at the previous stage's output first. The cases darkroom knows of are handled without an error, but an image with large empty areas, such as a mosaic stacked with `mosaic_crop = "none"` or a stack framed with `max`, is still a poor input: crop the stack to the area with data (`mosaic_crop = "rotate"` or `"rect"`, or `framing = "min"`) and run again. The known cases: `deconv` leaves tiles of one level as they are, `denoise` logs a warning for a channel that is mostly one level, and `finish` logs when it skips the yellow/blue step (no pixel inside the target mask) or takes the sky colour from the faintest part of the mask (a nebula that fills the frame).
 
 ## The shell splits paths with spaces
 
