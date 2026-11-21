@@ -126,3 +126,7 @@ After a code review in November 2026: StarNet2 downloads are hash-checked for ev
 ## A single zero pixel and the mosaic crop
 
 The Alnilam stack has one pixel inside the covered area that is exactly 0 in one channel. The crop used to count any pixel with a 0 in any channel as empty, so that one pixel limited the rectangle: 31.75° and 4140×2814 (69% of the pixels with data). A pixel now counts as empty only when all its channels are 0, and a small empty patch surrounded by data is ignored. On the same stack the crop became 27.5° and 4096×2951 (71%), still with the three belt stars, the Horsehead and the Flame Nebula, and with no empty pixel in it.
+
+## Two nights of M31
+
+The README image now comes from two nights: the first night's 404 subs and 487 of the second night's 827, taken under an 84% Moon, with the frames after M31 dropped below 35° and in twilight left out. Siril kept 734, 6 h 7 min in total. Against the first night alone the stack's signal-to-noise ratio rose by about 18% (outer disk 5.6 to 6.6, bright disk 19.5 to 23.2). darkroom has no multi-night mode; the subs were put in one folder with hard links. No code changed. See the [gallery](gallery.md#two-nights).
