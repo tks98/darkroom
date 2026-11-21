@@ -138,6 +138,12 @@ The later stages need an image with data everywhere, so the canvas has to be cro
 
 `--reuse-registration` restacks an already solved mosaic, for example with other `keep_*` settings. A mosaic needs more disk space than a normal stack, since the registered frames are 32-bit and as big as the whole canvas.
 
+## Several nights
+
+darkroom stacks one folder of subs, so to combine nights put their subs in one folder. On the same disk, hard links (`ln`) take no extra space; links into each night's own folder work too, since darkroom links the subs into `<work>/process/subs` itself. Keep the exposure, gain and filter the same on every night: the stack is calibrated with one master dark, which has to match the exposure and gain. With `framing = "min"` (the default) the result is cropped to the area every night covers.
+
+Look at each night's frames before adding them. A night with a bright Moon, or frames taken low in the sky or in twilight, add noise as well as signal. `[stack] keep_fwhm` and `keep_round` drop the blurriest frames of the whole set, but not frames that are merely noisy, so leave those out of the folder. The [gallery](gallery.md#two-nights) shows how M31 was combined from a dark night and a moonlit one.
+
 ## Disk space and cleanup
 
 The `stack` stage writes calibrated and registered frames to `<work>/process`: about 80 MB per sub, so 31 GB for the 404 M31 subs. They are only needed to restack. Delete the folder when you are happy with the stack, or set `[stack] clean = true` to have it removed after every successful stack.
