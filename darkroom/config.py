@@ -103,6 +103,8 @@ SCHEMA: dict[str, dict[str, tuple[str, object, str]]] = {
         "crop": ("str", "none", '"none", pixels "x,y,w,h", or an aspect ratio like "2:3" around the target'),
         "crop_center": ("str", None, 'centre "x,y" for an aspect-ratio crop (default: brightest part of the starless image)'),
         "crop_scale": ("float", 1.0, "aspect-ratio crop: fraction of the largest box that fits (1 = largest; lower for a small target)"),
+        "blue_shift": ("float", _F.blue_shift, "turn purple hues toward blue, 0 (off) to 1 (cosmetic)"),
+        "core_white": ("float", _F.core_white, "take colour out of the brightest part of the image, 0 (off) to 1 (cosmetic)"),
         "stars": ("str", "reduce", '"reduce" (remove stars with StarNet, enhance, add them back smaller) | "keep" (no star removal: for clusters)'),
     },
 }
@@ -313,6 +315,8 @@ _RANGES = (
     ("finish", "sharpen_radius", lambda v: v > 0, "a radius in pixels (> 0)"),
     ("finish", "black", lambda v: 0 <= v < 1, "0 or more and below 1"),
     ("finish", "erode", lambda v: v >= 0, "a whole number of passes, 0 or more"),
+    ("finish", "blue_shift", lambda v: 0 <= v <= 1, "0 (off) to 1"),
+    ("finish", "core_white", lambda v: 0 <= v <= 1, "0 (off) to 1"),
 )
 
 

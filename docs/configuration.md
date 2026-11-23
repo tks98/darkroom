@@ -177,6 +177,8 @@ darkroom looks for StarNet in this order: `--starnet-dir`, `[starnet] dir`, `$DA
 | `sat` | 1.2 | saturation |
 | `yb` | 1.8 | yellow and blue contrast inside the target (1 is off) |
 | `core` | 0.3 | compress the brightest part of the target, keeping its detail (0 is off) |
+| `blue_shift` | 0 | turn purple hues toward blue, 0 (off) to 1 (cosmetic) |
+| `core_white` | 0 | take colour out of the brightest part of the image, 0 (off) to 1 (cosmetic) |
 | `sharpen` | 0.8 | sharpening of the target |
 | `sharpen_radius` | 2.0 | sharpening radius in pixels |
 | `black` | 0.02 | black point |
@@ -202,13 +204,17 @@ Past about 2.0 the field starts to look thinned out. `erode` shrinks stars with 
 
 `core` is for a bright galaxy core that the stretch has pushed close to white. It splits the target's brightness into a smooth base and the detail on top of it, lowers the base where it is above 55% brightness, and keeps the detail, so the core fades smoothly instead of flattening into a white disc. Colours keep their ratios, and nothing below the threshold changes. On M31 at 0.3, no pixel in the centre is clipped any more (before, 7% of the centre 60 pixels across was at 98% brightness or more), M110's core is tamed the same way, and about 2% of the image changes. At 0.4 the core starts to look flat and greyish. It cannot show structure the data does not have: at the Seestar's 4 arcseconds per pixel, M31's core is a smooth bulge.
 
+`blue_shift` and `core_white` are a last colour pass on the finished image, done in Oklab, a colour space in which hue and lightness can be changed separately. Both are cosmetic and off by default. `blue_shift` turns hues in the purple band (Oklab hue 290 to 360 degrees, strongest at 325) toward blue (275); other hues, such as a yellow core or brown dust lanes, are left alone. `core_white` reduces colour where Oklab lightness is above 0.5, reaching the full amount at 0.8, so a bright core goes white while the fainter disk keeps its colour. Lightness is unchanged by both.
+
+On the two-night M31 stack (GHS, `balance = "0.92,0.90,1.18"`, `black = 0.06`, `sharpen = 0.8`, `sharpen_radius = 25`), the outer disk was purple (Oklab hue 320) and the core strongly yellow. `blue_shift = 1` and `core_white = 0.75` moved the disk to blue and the core to cream-white, close to the look of popular processed M31 images, and the sky stayed neutral. A balance shift cannot do this: taking red out to turn purple into blue lets green take over, which gave a green-teal cast and a yellow-green core.
+
 ### Cropping
 
 `crop = "2:3"` takes the largest box of that shape that fits, centred on the brightest part of the blurred image (the starless image, or the stretched one when stars are kept). For a target that is small in the frame, `crop_scale` shrinks that box: M13 used `crop = "1:1"` with `crop_scale = 0.45`. `crop_center = "x,y"` overrides the centre when the brightest point is the wrong place, and `"x,y,w,h"` crops by pixels.
 
 ## Value checks
 
-Values are checked when the settings are read, before any stage runs: `[color] focal` and `pixel` above 0; `[bge] smoothing` and `[denoise] strength` from 0 to 1; `[stretch] asinh` above 0, `shadows` from -10 to 0, `target_bg` between 0 and 1, `sat` at least -1, `method` `asinh` or `ghs`, `ghs_d` from 0 to 10, `ghs_b` from -5 to 15, `ghs_hp` from 0 to 1, `ghs_sp` `"auto"` or from 0 to `ghs_hp`, `balance` three numbers from 0.5 to 2; `[finish] gamma` and `sharpen_radius` above 0, `mid` between 0 and 1, `black` from 0 to below 1, `sat`, `yb` and `sharpen` at least 0, `core` and `star_strength` from 0 to 1, `erode` a whole number of at least 0. NaN and infinity are refused. The `[color]` names cannot contain a double quote.
+Values are checked when the settings are read, before any stage runs: `[color] focal` and `pixel` above 0; `[bge] smoothing` and `[denoise] strength` from 0 to 1; `[stretch] asinh` above 0, `shadows` from -10 to 0, `target_bg` between 0 and 1, `sat` at least -1, `method` `asinh` or `ghs`, `ghs_d` from 0 to 10, `ghs_b` from -5 to 15, `ghs_hp` from 0 to 1, `ghs_sp` `"auto"` or from 0 to `ghs_hp`, `balance` three numbers from 0.5 to 2; `[finish] gamma` and `sharpen_radius` above 0, `mid` between 0 and 1, `black` from 0 to below 1, `sat`, `yb` and `sharpen` at least 0, `core`, `star_strength`, `blue_shift` and `core_white` from 0 to 1, `erode` a whole number of at least 0. NaN and infinity are refused. The `[color]` names cannot contain a double quote.
 
 ## Looks
 

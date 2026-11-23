@@ -306,6 +306,10 @@ def _finish_args(o):
           help="unsharp-mask gaussian sigma (px)")
     o.add("--black", type=float, default=d.black, key=("finish", "black"), help="black point lift on starless")
     o.add("--erode", type=int, default=d.erode, key=("finish", "erode"), help="3x3 erosion passes on the star layer")
+    o.add("--blue-shift", type=float, default=d.blue_shift, key=("finish", "blue_shift"),
+          help="turn purple hues toward blue, 0 (off) to 1 (cosmetic)")
+    o.add("--core-white", type=float, default=d.core_white, key=("finish", "core_white"),
+          help="take colour out of the brightest part of the image, 0 (off) to 1 (cosmetic)")
     o.add("--no-neutral", dest="neutral", action="store_false", key=("finish", "neutral"),
           help="skip sky neutralization (on by default)")
     _crop_arg(o)
@@ -331,7 +335,7 @@ def _finish_params(a) -> FinishParams:
     crop = a.crop
     return FinishParams(gamma=a.gamma, star_strength=a.star_strength, mid=a.mid, sat=a.sat, yb=a.yb, core=a.core,
                         sharpen=a.sharpen, sharpen_radius=a.sharpen_radius, black=a.black,
-                        erode=a.erode, neutral=a.neutral,
+                        erode=a.erode, neutral=a.neutral, blue_shift=a.blue_shift, core_white=a.core_white,
                         crop=None if isinstance(crop, Aspect) else crop,
                         crop_aspect=tuple(crop) if isinstance(crop, Aspect) else None,
                         crop_center=parse_center(a.crop_center) if getattr(a, "crop_center", None) else None,

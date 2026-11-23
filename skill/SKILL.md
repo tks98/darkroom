@@ -266,8 +266,17 @@ The `[stretch]` settings worth varying for a galaxy. `stretch` overwrites
 The `galaxy` look stays on `asinh` with `balance = "1,1,1"`. GHS with
 `balance = "0.92,0.90,1.18"` is the suggested variant to try on a galaxy.
 
-`yb` and `balance` are cosmetic. They make regions easier to tell apart or
-shift the overall tint; they are not measured colour. Say so when you
+For a galaxy whose disk comes out purple and core yellow, a balance change
+will not fix it (it goes green first). Try `[finish] blue_shift` and
+`core_white` instead:
+
+| Setting | Effect | Too far |
+|---|---|---|
+| `blue_shift` | turns purple hues (Oklab 290 to 360) toward blue, leaves yellow and brown alone; 1 turned M31's purple disk blue | not seen at 1 on M31; check the sky stays neutral and star halos have no blue fringe |
+| `core_white` | takes colour out where the image is bright (Oklab lightness above 0.5, fully above 0.8); 0.75 made M31's yellow core cream-white | not tried above 0.75; expect a grey core with no warm centre |
+
+`yb`, `balance`, `blue_shift` and `core_white` are cosmetic. They make
+regions easier to tell apart or shift the overall tint; they are not measured colour. Say so when you
 describe the result.
 
 ## Choosing a look

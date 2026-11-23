@@ -7,6 +7,7 @@ galaxy   = starless -> black point, midtone lift, saturation
            -> masked unsharp mask on luminance (sharpen)
 stars'   = stars ** gamma (optionally eroded) * star_strength
 result   = screen(galaxy, stars') -> sky neutralization (neutral) -> crop
+           -> purple hues toward blue (blue_shift), bright core toward white (core_white)
 
 Port of the hand-run recombine.py; the maths is unchanged.
 """
@@ -39,6 +40,8 @@ class FinishParams:
     crop_center: tuple[int, int] | None = None      # x, y; overrides the detected target centre
     crop_scale: float = 1.0                         # aspect crop: fraction of the largest box (1 = largest)
     stars: str = "reduce"                           # "reduce": starless + shrunk stars; "keep": no star removal
+    blue_shift: float = 0.0                         # 0 = off; 1 turns purple hues fully to blue (cosmetic)
+    core_white: float = 0.0                         # 0 = off; 1 removes all colour from the brightest areas
 
 
 def load(p):
@@ -306,6 +309,48 @@ def check_finite(out) -> None:
                          f"({bad / out.size:.1%}); nothing was saved")
 
 
+# Oklab (Bjorn Ottosson), from linear sRGB
+_LMS = np.array([[0.4122214708, 0.5363325363, 0.0514459929],
+                 [0.2119034982, 0.6806995451, 0.1073969566],
+                 [0.0883024619, 0.2817188376, 0.6299787005]])
+_LAB = np.array([[0.2104542553, 0.7936177850, -0.0040720468],
+                 [1.9779984951, -2.4285922050, 0.4505937099],
+                 [0.0259040371, 0.7827717662, -0.8086757660]])
+PURPLE_HUE, PURPLE_HALF_WIDTH, BLUE_HUE = 325.0, 35.0, 275.0     # Oklab hue angles, degrees
+CORE_L0, CORE_L1 = 0.5, 0.8                                       # Oklab lightness ramp for core_white
+
+
+def _srgb_to_linear(c):
+    return np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+
+
+def _linear_to_srgb(c):
+    return np.where(c <= 0.0031308, 12.92 * c, 1.055 * np.clip(c, 0, None) ** (1 / 2.4) - 0.055)
+
+
+def recolour(img, blue_shift=0.0, core_white=0.0):
+    """Cosmetic colour pass on the finished (sRGB) image, in Oklab:
+
+    blue_shift: hues in the purple band (Oklab 290 to 360 degrees, strongest at 325) turn toward
+    blue (275) by this fraction; other hues are untouched.
+    core_white: chroma is reduced by up to this fraction where Oklab lightness is above 0.5,
+    reaching the full amount at 0.8, so a bright core goes white while fainter areas keep colour.
+    Both 0 returns img unchanged."""
+    if blue_shift == 0 and core_white == 0:
+        return img
+    lab = np.cbrt(np.clip(_srgb_to_linear(img.astype(np.float64)), 0, None) @ _LMS.T) @ _LAB.T
+    L, a, b = lab[..., 0], lab[..., 1], lab[..., 2]
+    C = np.hypot(a, b)
+    h = np.degrees(np.arctan2(b, a)) % 360
+    w = np.clip(1 - np.abs(h - PURPLE_HUE) / PURPLE_HALF_WIDTH, 0, 1) * blue_shift
+    h = h + w * (((BLUE_HUE - h + 180) % 360) - 180)
+    t = np.clip((L - CORE_L0) / (CORE_L1 - CORE_L0), 0, 1)
+    C = C * (1 - core_white * t * t * (3 - 2 * t))
+    lab = np.stack([L, C * np.cos(np.radians(h)), C * np.sin(np.radians(h))], -1)
+    lin = (lab @ np.linalg.inv(_LAB).T) ** 3 @ np.linalg.inv(_LMS).T
+    return np.clip(_linear_to_srgb(np.clip(lin, 0, 1)), 0, 1).astype(np.float32)
+
+
 def save(out, base: Path, log=print):
     check_finite(out)
     tifffile.imwrite(str(base) + ".tif", (out * 65535 + 0.5).astype(np.uint16), photometric="rgb")
@@ -316,4 +361,7 @@ def save(out, base: Path, log=print):
 def run(original: Path, starless: Path | None, base: Path, p: FinishParams, log=print):
     """``starless`` is not read when p.stars == "keep"."""
     out = recombine(load(original), None if p.stars == "keep" else load(starless), p, log)
+    if p.blue_shift or p.core_white:
+        log(f"recolour: blue_shift {p.blue_shift:g}, core_white {p.core_white:g}")
+        out = recolour(out, p.blue_shift, p.core_white)
     save(out, base, log)

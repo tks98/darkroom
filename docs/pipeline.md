@@ -70,7 +70,7 @@ With stars removed, `finish` works on two layers:
 - The starless layer gets a black point, a midtone lift and saturation. Inside the target only, it then gets a yellow and blue contrast push and sharpening.
 - The star layer is shrunk with a gamma curve.
 
-The two are combined with a screen blend, the sky is made neutral, and the result is cropped. [Configuration](configuration.md#finish) covers each setting with examples.
+The two are combined with a screen blend, the sky is made neutral, and the result is cropped. `blue_shift` and `core_white`, when on, then turn purple hues toward blue and take colour out of the brightest areas. [Configuration](configuration.md#finish) covers each setting with examples.
 
 The sky colour is measured as the median of every pixel outside the target. An earlier version measured only the darker half of those pixels. That is biased toward whichever colour channel is noisiest, and on M13 it added a blue cast to a sky that was already neutral. See [history](history.md#phase-5-a-second-target).
 

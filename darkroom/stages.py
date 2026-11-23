@@ -668,7 +668,8 @@ def finish_params(f: dict) -> FinishParams:
                         crop=value if kind == "box" else None,
                         crop_aspect=value if kind == "aspect" else None,
                         crop_center=center if kind == "aspect" else None,
-                        crop_scale=float(f.get("crop_scale", 1.0)), stars=f.get("stars", "reduce"))
+                        crop_scale=float(f.get("crop_scale", 1.0)), stars=f.get("stars", "reduce"),
+                        blue_shift=float(f.get("blue_shift", 0.0)), core_white=float(f.get("core_white", 0.0)))
 
 
 def starnet_needed(finish_table: dict) -> bool:
@@ -733,6 +734,9 @@ def result_params(stage: str, table: dict) -> dict:
             out["stars"] = table["stars"]
         if float(table.get("core", 0.0)) != 0.0:
             out["core"] = float(table["core"])   # finals made before core existed had none: rerun them
+        for k in ("blue_shift", "core_white"):
+            if float(table.get(k, 0.0)) != 0.0:
+                out[k] = float(table[k])
         if aspect and float(table.get("crop_scale", 1.0)) != 1.0:
             out["crop_scale"] = float(table["crop_scale"])
     return out
