@@ -130,3 +130,7 @@ The Alnilam stack has one pixel inside the covered area that is exactly 0 in one
 ## Two nights of M31
 
 The README image now comes from two nights: the first night's 404 subs and 487 of the second night's 827, taken under an 84% Moon, with the frames after M31 dropped below 35° and in twilight left out. Siril kept 734, 6 h 7 min in total. Against the first night alone the stack's signal-to-noise ratio rose by about 18% (outer disk 5.6 to 6.6, bright disk 19.5 to 23.2). darkroom has no multi-night mode; the subs were put in one folder with hard links. No code changed. See the [gallery](gallery.md#two-nights).
+
+## A GHS stretch and a colour balance
+
+`[stretch] method = "ghs"` swaps the arcsinh step for Siril's generalised hyperbolic stretch (`ght`), and `[stretch] balance` multiplies R, G and B before either stretch. Both were tried by hand on the two-night M31 stack first. With SPCC colour, GHS (D 4, b 12, HP 0.9, SP 0.0023, the sky median) kept the core from blowing out to white and showed the dust lanes to the centre. A balance of 0.92, 0.90, 1.18 gave a blue-lavender outer disk; 0.78, 1, 1.32 went teal, and 0.88, 0.86, 1.26 with a stronger finish saturation and yellow/blue push left a hard purple edge at the galaxy mask. `ghs_sp = "auto"` measures the sky median in Python before the script runs. The defaults (`asinh`, 1,1,1) leave the stretch script and existing work directories as they were, and the `galaxy` look is unchanged.

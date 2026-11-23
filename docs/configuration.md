@@ -139,12 +139,24 @@ Flags: `darkroom deconv --strength 0.5 --psf 3.2 --cpu`; `darkroom run --cpu` al
 
 | Key | Default | Meaning |
 |---|---|---|
-| `asinh` | 25 | Siril arcsinh stretch factor |
+| `method` | `asinh` | the first stretch: `asinh` (Siril's `asinh -human`) or `ghs` (Siril's generalised hyperbolic stretch, `ght`) |
+| `asinh` | 25 | Siril arcsinh stretch factor (`asinh` method only) |
+| `ghs_d` | 4 | `ghs` stretch strength, 0 to 10 |
+| `ghs_b` | 12 | `ghs` local intensity, -5 to 15; higher values concentrate the stretch around `ghs_sp` |
+| `ghs_hp` | 0.9 | `ghs` highlight protection, 0 to 1; above this level the stretch is linear |
+| `ghs_sp` | `auto` | `ghs` symmetry point, 0 to `ghs_hp`, or `"auto"` for the sky level of the input |
+| `balance` | `"1,1,1"` | R,G,B multipliers on the linear image before the stretch, each 0.5 to 2 |
 | `shadows` | -2.5 | autostretch shadow clipping, in sigma |
 | `target_bg` | 0.10 | autostretch target background level |
 | `sat` | 0.35 | Siril saturation amount |
 
 A low `asinh` gives a softer, flatter image with a brighter core. Higher values keep the core resolved and the star colours visible, but too high mottles the sky with colour noise. The galaxy and nebula looks use 25; the cluster look uses 100.
+
+`method = "ghs"` replaces the arcsinh step with `ght -D= -B= -SP= -HP= -human`; the autostretch, saturation and saves after it are the same. With `ghs_sp = "auto"` darkroom measures the sky level of the linear input before the script runs: the median, over the pixels that are not 0 in every channel, of the mean of R, G and B (after `balance`). It prints the value and writes it to `logs/stretch.log`. On the two-night M31 stack with SPCC colour, GHS (D 4, b 12, HP 0.9, SP at the sky level of 0.0023) kept the core from blowing out to white and showed the dust lanes all the way to the centre.
+
+`balance` multiplies R, G and B before the stretch (a Siril `ccm` line; it is left out at 1,1,1). It is a cosmetic shift on top of SPCC, not measured colour. On the same M31 stack `"0.92,0.90,1.18"` gave a blue-lavender outer disk. Pushed further it goes wrong: `"0.78,1,1.32"` gave a teal cast, and `"0.88,0.86,1.26"` with a higher `[finish] sat` and `yb` gave a hard purple edge where the finish galaxy mask ends.
+
+The `galaxy` look keeps `asinh` and `balance = "1,1,1"`. For a galaxy with a bright core, `method = "ghs"` with `balance = "0.92,0.90,1.18"` is worth trying as a variant. Changing `method`, `balance` or a `ghs_*` setting (while `method = "ghs"`) reruns `stretch` and everything after it. Work directories stretched before these settings existed stay up to date while `method = "asinh"` and `balance = "1,1,1"`.
 
 ## [starnet]
 
@@ -196,7 +208,7 @@ Past about 2.0 the field starts to look thinned out. `erode` shrinks stars with 
 
 ## Value checks
 
-Values are checked when the settings are read, before any stage runs: `[color] focal` and `pixel` above 0; `[bge] smoothing` and `[denoise] strength` from 0 to 1; `[stretch] asinh` above 0, `shadows` from -10 to 0, `target_bg` between 0 and 1, `sat` at least -1; `[finish] gamma` and `sharpen_radius` above 0, `mid` between 0 and 1, `black` from 0 to below 1, `sat`, `yb` and `sharpen` at least 0, `core` and `star_strength` from 0 to 1, `erode` a whole number of at least 0. NaN and infinity are refused. The `[color]` names cannot contain a double quote.
+Values are checked when the settings are read, before any stage runs: `[color] focal` and `pixel` above 0; `[bge] smoothing` and `[denoise] strength` from 0 to 1; `[stretch] asinh` above 0, `shadows` from -10 to 0, `target_bg` between 0 and 1, `sat` at least -1, `method` `asinh` or `ghs`, `ghs_d` from 0 to 10, `ghs_b` from -5 to 15, `ghs_hp` from 0 to 1, `ghs_sp` `"auto"` or from 0 to `ghs_hp`, `balance` three numbers from 0.5 to 2; `[finish] gamma` and `sharpen_radius` above 0, `mid` between 0 and 1, `black` from 0 to below 1, `sat`, `yb` and `sharpen` at least 0, `core` and `star_strength` from 0 to 1, `erode` a whole number of at least 0. NaN and infinity are refused. The `[color]` names cannot contain a double quote.
 
 ## Looks
 

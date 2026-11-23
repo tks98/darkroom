@@ -314,3 +314,27 @@ def test_stack_refuses_to_mix_runs(tmp_path, monkeypatch):
     assert not (work / "process").exists()
     with pytest.raises(tools.StageError, match="nothing to reuse"):
         stages.stack(work, subs, None, reuse=True)
+
+
+def test_stretch_method_and_balance_rerun_stretch_and_after(fake):
+    work, ran, _ = fake
+    run(work); names(ran)
+    plain = stages.recorded_params(work, "stretch")
+    assert "method" not in plain and "balance" not in plain          # as before these settings existed
+    cfg = work / "darkroom.toml"
+    text = cfg.read_text()
+    cfg.write_text(text + '[stretch]\nmethod = "asinh"\nbalance = "1,1,1"\n')     # the defaults, written out
+    assert run(work) == 0 and names(ran) == []
+    cfg.write_text(text + '[stretch]\nmethod = "ghs"\n')
+    assert run(work) == 0 and names(ran) == ["stretch", "starnet", "finish"]
+    assert stages.recorded_params(work, "stretch")["ghs_sp"] == "auto"
+    assert run(work) == 0 and names(ran) == []
+    cfg.write_text(text + '[stretch]\nmethod = "ghs"\nghs_b = 10\n')
+    assert run(work) == 0 and names(ran) == ["stretch", "starnet", "finish"]
+    cfg.write_text(text + '[stretch]\nmethod = "ghs"\nghs_b = 10\nasinh = 40\n')   # not used by ghs
+    assert run(work) == 0 and names(ran) == []
+    cfg.write_text(text + '[stretch]\nmethod = "ghs"\nghs_b = 10\nbalance = "0.92,0.90,1.18"\n')
+    assert run(work) == 0 and names(ran) == ["stretch", "starnet", "finish"]
+    cfg.write_text(text)
+    assert run(work) == 0 and names(ran) == ["stretch", "starnet", "finish"]
+    assert stages.recorded_params(work, "stretch") == plain

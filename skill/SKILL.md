@@ -201,6 +201,14 @@ cheap to fix at the stage that caused them and expensive to notice at the end.
 - The sky should be dark grey, not black, and the brightest core should not
   be pure white. A flat, washed-out target means the arcsinh factor is too
   high; a blown core means the autostretch is too aggressive.
+- A galaxy core that is white with no dust lanes inside it: try
+  `[stretch] method = "ghs"` as a variant (Siril's generalised hyperbolic
+  stretch). On M31 with SPCC colour it kept the core from blowing out and
+  showed the dust lanes to the centre. With `ghs_sp = "auto"` the stage
+  prints the sky level it used as SP; it should be a small number near the
+  sky's linear level (0.0023 on M31), not 0.
+- With a `[stretch] balance` other than 1,1,1, look at the sky and the outer
+  disk for a colour cast (teal, purple) before going on.
 
 ### After `starnet`
 - View `starless.tif`. Look for blotches or holes where bright stars were, and
@@ -244,8 +252,21 @@ What the main `finish` settings do, and what going too far looks like:
 | `sharpen` | masked unsharp mask on the target | halos along dust lanes, grain |
 | `crop` | `"W:H"` (largest box of that shape centred on the brightest part of the target), or `"x,y,w,h"` | target touching the edge; use `crop_center` if the centre is wrong |
 
-`yb` is cosmetic. It makes regions easier to tell apart; it is not measured
-colour. Say so when you describe the result.
+The `[stretch]` settings worth varying for a galaxy. `stretch` overwrites
+`stretched.*`, so keep the current finish with `finish --out NAME`, then run
+`stretch`, `starnet` and `finish` again for each variant:
+
+| Setting | Effect | Too far |
+|---|---|---|
+| `method = "ghs"` | generalised hyperbolic stretch around the sky level instead of arcsinh; keeps a bright core from blowing out (`ghs_d` 4, `ghs_b` 12, `ghs_hp` 0.9, `ghs_sp` auto on M31) | not seen on M31; compare against the asinh result before keeping it |
+| `balance = "R,G,B"` | multiplies the linear channels before the stretch; `"0.92,0.90,1.18"` gave M31 a blue-lavender outer disk | `"0.78,1,1.32"` gave a teal cast; `"0.88,0.86,1.26"` with higher `[finish] sat` and `yb` gave a hard purple edge at the galaxy mask |
+
+The `galaxy` look stays on `asinh` with `balance = "1,1,1"`. GHS with
+`balance = "0.92,0.90,1.18"` is the suggested variant to try on a galaxy.
+
+`yb` and `balance` are cosmetic. They make regions easier to tell apart or
+shift the overall tint; they are not measured colour. Say so when you
+describe the result.
 
 ## Choosing a look
 
