@@ -250,6 +250,8 @@ What the main `finish` settings do, and what going too far looks like:
 | `yb` | stretches yellow/blue differences inside the target only | core goes green-yellow, arms purple (seen at 2.6 on M31) |
 | `core` | lowers a near-white core, keeps its detail | flat, greyish core (0.4 on M31) |
 | `sharpen` | masked unsharp mask on the target | halos along dust lanes, grain |
+| `sharpen_radius` | 2 sharpens fine detail; around 25 acts as local contrast and clears a hazy look (M31 with GHS: `sharpen` 0.8, radius 25) | `sharpen` 1.2 at radius 25 looked crunchy and grainy at 1:1 |
+| `black` | black point on the starless layer; raise it if the sky looks grey (0.06 took M31's sky from about 31/255 to 19/255) | 0.08 started eating the faint outer disk |
 | `crop` | `"W:H"` (largest box of that shape centred on the brightest part of the target), or `"x,y,w,h"` | target touching the edge; use `crop_center` if the centre is wrong |
 
 The `[stretch]` settings worth varying for a galaxy. `stretch` overwrites
