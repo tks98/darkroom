@@ -25,7 +25,7 @@ MOSAIC_CROPS = ("rotate", "rect", "none")
 _F = FinishParams()
 
 # section -> key -> (type, built-in default, one-line description)
-# types: "str", "path", "float", "int", "bool", "psf" (a number, or "auto")
+# types: "str", "path", "float", "int", "bool", "auto_num" (a number, or "auto")
 SCHEMA: dict[str, dict[str, tuple[str, object, str]]] = {
     "target": {
         "name": ("str", None, "object name (informational)"),
@@ -69,7 +69,7 @@ SCHEMA: dict[str, dict[str, tuple[str, object, str]]] = {
     },
     "deconv": {
         "strength": ("float", 0, "GraXpert object deconvolution strength 0..1; 0 = off (the stage is skipped)"),
-        "psf": ("psf", "auto", 'star FWHM in pixels, or "auto" to measure it from the denoised image'),
+        "psf": ("auto_num", "auto", 'star FWHM in pixels, or "auto" to measure it from the denoised image'),
         "cpu": ("bool", False, "run on the CPU instead of the GPU (CoreML on macOS, CUDA if available)"),
     },
     "stretch": {
@@ -77,6 +77,13 @@ SCHEMA: dict[str, dict[str, tuple[str, object, str]]] = {
         "shadows": ("float", -2.5, "autostretch shadows clipping (sigma)"),
         "target_bg": ("float", 0.10, "autostretch target background"),
         "sat": ("float", 0.35, "Siril satu amount"),
+        "method": ("str", "asinh", '"asinh" (asinh -human) | "ghs" (generalised hyperbolic stretch, Siril ght)'),
+        "ghs_d": ("float", 4.0, "ghs stretch strength D (0..10)"),
+        "ghs_b": ("float", 12.0, "ghs local intensity b (-5..15; higher concentrates the stretch near SP)"),
+        "ghs_hp": ("float", 0.9, "ghs highlight protection HP (0..1; above it the stretch is linear)"),
+        "ghs_sp": ("auto_num", "auto", 'ghs symmetry point SP (0..1), or "auto" for the sky level of the input'),
+        "balance": ("str", "1,1,1", '"R,G,B" multipliers on the linear image before the stretch '
+                    "(cosmetic white balance on top of SPCC; each 0.5..2)"),
     },
     "starnet": {
         "dir": ("path", None, "folder containing starnet2 or starnet++ (else $DARKROOM_STARNET_DIR, then `darkroom get-starnet`'s install)"),
@@ -96,6 +103,8 @@ SCHEMA: dict[str, dict[str, tuple[str, object, str]]] = {
         "crop": ("str", "none", '"none", pixels "x,y,w,h", or an aspect ratio like "2:3" around the target'),
         "crop_center": ("str", None, 'centre "x,y" for an aspect-ratio crop (default: brightest part of the starless image)'),
         "crop_scale": ("float", 1.0, "aspect-ratio crop: fraction of the largest box that fits (1 = largest; lower for a small target)"),
+        "blue_shift": ("float", _F.blue_shift, "turn purple hues toward blue, 0 (off) to 1 (cosmetic)"),
+        "core_white": ("float", _F.core_white, "take colour out of the brightest part of the image, 0 (off) to 1 (cosmetic)"),
         "stars": ("str", "reduce", '"reduce" (remove stars with StarNet, enhance, add them back smaller) | "keep" (no star removal: for clusters)'),
     },
 }
@@ -130,6 +139,27 @@ _PRESET_SETTING_SECTIONS = tuple(s for s in SCHEMA if s != "target")
 
 # [target] keys that hold a calibration file or folder (or "none"; dark also "auto")
 CALIBRATION_KEYS = (("target", "dark"), ("target", "bias"), ("target", "flats"))
+
+
+STRETCH_METHODS = ("asinh", "ghs")
+BALANCE_RANGE = (0.5, 2.0)
+
+
+def parse_balance(value) -> tuple[float, float, float]:
+    """[stretch] balance: "R,G,B" multipliers, e.g. "0.92,0.90,1.18" -> (0.92, 0.9, 1.18)."""
+    lo, hi = BALANCE_RANGE
+    bad = ValueError(f'balance should be three numbers "R,G,B", each from {lo:g} to {hi:g} '
+                     f'(1,1,1 = unchanged), like "0.92,0.90,1.18"; got {value!r}')
+    parts = [p.strip() for p in str(value).split(",")]
+    if len(parts) != 3:
+        raise bad
+    try:
+        out = tuple(float(p) for p in parts)
+    except ValueError:
+        raise bad from None
+    if not all(math.isfinite(v) and lo <= v <= hi for v in out):
+        raise bad
+    return out
 
 
 def parse_narrowband(value) -> tuple[tuple[float, float], ...] | None:
@@ -215,11 +245,11 @@ def preset_path(kind: str, name: str, base: Path | None = None) -> Path:
 
 def _coerce(section: str, key: str, value, where: str, base: Path | None):
     typ = SCHEMA[section][key][0]
-    want = {"float": "a number", "int": "a number", "psf": 'a number or "auto"'}.get(typ, typ)
+    want = {"float": "a number", "int": "a number", "auto_num": 'a number or "auto"'}.get(typ, typ)
     bad = ConfigError(f"{where}: [{section}] {key} should be {want}, got {value!r}")
-    if typ in ("psf", "float", "int") and isinstance(value, float) and not math.isfinite(value):
+    if typ in ("auto_num", "float", "int") and isinstance(value, float) and not math.isfinite(value):
         raise ConfigError(f"{where}: [{section}] {key} should be a finite number, got {value!r}")
-    if typ == "psf":
+    if typ == "auto_num":
         if isinstance(value, str):
             if value.strip().lower() == "auto":
                 return "auto"
@@ -272,6 +302,9 @@ _RANGES = (
     ("stretch", "shadows", lambda v: -10 <= v <= 0, "a clipping point in sigma, -10 to 0 (usually about -2.5)"),
     ("stretch", "target_bg", lambda v: 0 < v < 1, "a background level between 0 and 1 (e.g. 0.10)"),
     ("stretch", "sat", lambda v: v >= -1, "a saturation amount >= -1 (0 = unchanged)"),
+    ("stretch", "ghs_d", lambda v: 0 <= v <= 10, "a stretch strength from 0 to 10 (e.g. 4)"),
+    ("stretch", "ghs_b", lambda v: -5 <= v <= 15, "a local intensity from -5 to 15 (e.g. 12)"),
+    ("stretch", "ghs_hp", lambda v: 0 <= v <= 1, "a highlight protection point from 0 to 1 (e.g. 0.9)"),
     ("finish", "gamma", lambda v: v > 0, "> 0 (1 = unchanged)"),
     ("finish", "star_strength", lambda v: 0 <= v <= 1, "0 to 1"),
     ("finish", "mid", lambda v: 0 < v < 1, "between 0 and 1 (0.5 = unchanged)"),
@@ -282,6 +315,8 @@ _RANGES = (
     ("finish", "sharpen_radius", lambda v: v > 0, "a radius in pixels (> 0)"),
     ("finish", "black", lambda v: 0 <= v < 1, "0 or more and below 1"),
     ("finish", "erode", lambda v: v >= 0, "a whole number of passes, 0 or more"),
+    ("finish", "blue_shift", lambda v: 0 <= v <= 1, "0 (off) to 1"),
+    ("finish", "core_white", lambda v: 0 <= v <= 1, "0 (off) to 1"),
 )
 
 
@@ -318,6 +353,17 @@ def _check(values: dict[str, dict[str, object]]) -> None:
         raise ConfigError(f"[deconv] strength is 0 (off) to 1, got {dc['strength']!r}")
     if dc["psf"] != "auto" and not 0 < dc["psf"] <= 50:
         raise ConfigError(f'[deconv] psf is the star FWHM in pixels (0 < value <= 50) or "auto", got {dc["psf"]!r}')
+    st = values["stretch"]
+    st["method"] = st["method"].strip().lower()
+    if st["method"] not in STRETCH_METHODS:
+        raise ConfigError(f'[stretch] method should be "asinh" or "ghs", got {st["method"]!r}')
+    if st["ghs_sp"] != "auto" and not 0 <= st["ghs_sp"] <= st["ghs_hp"]:
+        raise ConfigError(f'[stretch] ghs_sp should be "auto" or a symmetry point from 0 to ghs_hp '
+                          f'({st["ghs_hp"]:g}), got {st["ghs_sp"]!r}')
+    try:
+        parse_balance(st["balance"])
+    except ValueError as e:
+        raise ConfigError(f"[stretch] {e}") from None
     t = values["target"]
     for _section, key in CALIBRATION_KEYS:
         if t[key] is not None and t[key].lower() in ("auto", "none"):

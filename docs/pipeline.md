@@ -57,6 +57,8 @@ In a trial on M31, strength 0.5 with a PSF of 3.2 pixels made the dust lanes nea
 
 Siril applies an arcsinh stretch, which brightens faint parts while keeping star colour, then a linked autostretch and a little saturation. This is where the image goes from linear data to something you can look at.
 
+With `[stretch] method = "ghs"` the arcsinh step is replaced by Siril's generalised hyperbolic stretch, centred on the sky level that darkroom measures from the linear image. `[stretch] balance` can multiply R, G and B before either stretch, as a cosmetic shift on top of SPCC. See [configuration](configuration.md#stretch).
+
 ## starnet
 
 StarNet splits the stretched image into a starless image. darkroom runs StarNet2 2.6, installed by `darkroom get-starnet`, or the older StarNet v2.0.2 if you point it at that folder; the two gave the same M31 result to within 0.01 of an 8-bit level. Switching versions reruns this stage and `finish`. The star layer is worked out later as the difference. With `[finish] stars = "keep"` (the cluster look) this stage is skipped.
@@ -68,7 +70,7 @@ With stars removed, `finish` works on two layers:
 - The starless layer gets a black point, a midtone lift and saturation. Inside the target only, it then gets a yellow and blue contrast push and sharpening.
 - The star layer is shrunk with a gamma curve.
 
-The two are combined with a screen blend, the sky is made neutral, and the result is cropped. [Configuration](configuration.md#finish) covers each setting with examples.
+The two are combined with a screen blend, the sky is made neutral, and the result is cropped. `blue_shift` and `core_white`, when on, then turn purple hues toward blue and take colour out of the brightest areas. [Configuration](configuration.md#finish) covers each setting with examples.
 
 The sky colour is measured as the median of every pixel outside the target. An earlier version measured only the darker half of those pixels. That is biased toward whichever colour channel is noisiest, and on M13 it added a blue cast to a sky that was already neutral. See [history](history.md#phase-5-a-second-target).
 

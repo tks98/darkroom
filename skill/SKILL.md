@@ -201,6 +201,14 @@ cheap to fix at the stage that caused them and expensive to notice at the end.
 - The sky should be dark grey, not black, and the brightest core should not
   be pure white. A flat, washed-out target means the arcsinh factor is too
   high; a blown core means the autostretch is too aggressive.
+- A galaxy core that is white with no dust lanes inside it: try
+  `[stretch] method = "ghs"` as a variant (Siril's generalised hyperbolic
+  stretch). On M31 with SPCC colour it kept the core from blowing out and
+  showed the dust lanes to the centre. With `ghs_sp = "auto"` the stage
+  prints the sky level it used as SP; it should be a small number near the
+  sky's linear level (0.0023 on M31), not 0.
+- With a `[stretch] balance` other than 1,1,1, look at the sky and the outer
+  disk for a colour cast (teal, purple) before going on.
 
 ### After `starnet`
 - View `starless.tif`. Look for blotches or holes where bright stars were, and
@@ -242,10 +250,34 @@ What the main `finish` settings do, and what going too far looks like:
 | `yb` | stretches yellow/blue differences inside the target only | core goes green-yellow, arms purple (seen at 2.6 on M31) |
 | `core` | lowers a near-white core, keeps its detail | flat, greyish core (0.4 on M31) |
 | `sharpen` | masked unsharp mask on the target | halos along dust lanes, grain |
+| `sharpen_radius` | 2 sharpens fine detail; around 25 acts as local contrast and clears a hazy look (M31 with GHS: `sharpen` 0.8, radius 25) | `sharpen` 1.2 at radius 25 looked crunchy and grainy at 1:1 |
+| `black` | black point on the starless layer; raise it if the sky looks grey (0.06 took M31's sky from about 31/255 to 19/255) | 0.08 started eating the faint outer disk |
 | `crop` | `"W:H"` (largest box of that shape centred on the brightest part of the target), or `"x,y,w,h"` | target touching the edge; use `crop_center` if the centre is wrong |
 
-`yb` is cosmetic. It makes regions easier to tell apart; it is not measured
-colour. Say so when you describe the result.
+The `[stretch]` settings worth varying for a galaxy. `stretch` overwrites
+`stretched.*`, so keep the current finish with `finish --out NAME`, then run
+`stretch`, `starnet` and `finish` again for each variant:
+
+| Setting | Effect | Too far |
+|---|---|---|
+| `method = "ghs"` | generalised hyperbolic stretch around the sky level instead of arcsinh; keeps a bright core from blowing out (`ghs_d` 4, `ghs_b` 12, `ghs_hp` 0.9, `ghs_sp` auto on M31) | not seen on M31; compare against the asinh result before keeping it |
+| `balance = "R,G,B"` | multiplies the linear channels before the stretch; `"0.92,0.90,1.18"` gave M31 a blue-lavender outer disk | `"0.78,1,1.32"` gave a teal cast; `"0.88,0.86,1.26"` with higher `[finish] sat` and `yb` gave a hard purple edge at the galaxy mask |
+
+The `galaxy` look stays on `asinh` with `balance = "1,1,1"`. GHS with
+`balance = "0.92,0.90,1.18"` is the suggested variant to try on a galaxy.
+
+For a galaxy whose disk comes out purple and core yellow, a balance change
+will not fix it (it goes green first). Try `[finish] blue_shift` and
+`core_white` instead:
+
+| Setting | Effect | Too far |
+|---|---|---|
+| `blue_shift` | turns purple hues (Oklab 290 to 360) toward blue, leaves yellow and brown alone; 1 turned M31's purple disk blue | not seen at 1 on M31; check the sky stays neutral and star halos have no blue fringe |
+| `core_white` | takes colour out where the image is bright (Oklab lightness above 0.5, fully above 0.8); 0.75 made M31's yellow core cream-white | not tried above 0.75; expect a grey core with no warm centre |
+
+`yb`, `balance`, `blue_shift` and `core_white` are cosmetic. They make
+regions easier to tell apart or shift the overall tint; they are not measured colour. Say so when you
+describe the result.
 
 ## Choosing a look
 

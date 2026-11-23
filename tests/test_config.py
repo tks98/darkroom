@@ -48,7 +48,8 @@ def test_precedence_flag_config_look_camera_builtin(tmp_path):
     write(tmp_path, '[target]\ncamera = "mycam.toml"\nlook = "mylook.toml"\n[stretch]\nsat = 0.7\n'
                     '[color]\nsensor = "T"\n')
     s = settings(tmp_path, "stretch", "--shadows", "-3")
-    assert s["stretch"] == {"asinh": 50, "shadows": -3.0, "target_bg": 0.10, "sat": 0.7}
+    assert s["stretch"] == {"asinh": 50, "shadows": -3.0, "target_bg": 0.10, "sat": 0.7, "method": "asinh",
+                            "ghs_d": 4.0, "ghs_b": 12.0, "ghs_hp": 0.9, "ghs_sp": "auto", "balance": "1,1,1"}
     assert s.sources[("stretch", "asinh")] == "look preset mylook"
     assert s.sources[("stretch", "shadows")] == "flag"
     assert s.sources[("stretch", "sat")] == "darkroom.toml"

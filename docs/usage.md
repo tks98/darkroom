@@ -120,6 +120,17 @@ darkroom finish --work m31 --gamma 2.4 --out try_g24
 
 [Configuration](configuration.md#finish) shows what the main `finish` settings do and what they look like pushed too far.
 
+The stretch is slower to vary, because `stretch` overwrites `stretched.*` and `starnet` and `finish` have to run again after it. Keep the finish you have with `--out`, then try the other stretch:
+
+```sh
+darkroom finish  --work m31 --out asinh_final
+darkroom stretch --work m31 --method ghs --balance 0.92,0.90,1.18
+darkroom starnet --work m31
+darkroom finish  --work m31 --out ghs_final
+```
+
+`--method ghs` uses Siril's generalised hyperbolic stretch instead of the arcsinh one; `--ghs-d`, `--ghs-b`, `--ghs-hp` and `--ghs-sp` set its parameters, and `--ghs-sp auto` (the default) centres it on the sky level of the linear image. `--balance R,G,B` multiplies the colour channels before the stretch. Once you have chosen, put the settings in `[stretch]` in `darkroom.toml`, or the next `run` goes back to what the file says. [Configuration](configuration.md#stretch) has the settings and what they did on M31.
+
 ## Mosaics
 
 The Seestar's mosaic mode moves the mount between frames: a couple of frames at each pointing, dozens of pointings, covering a field bigger than the sensor. Normal registration matches every frame against one reference frame, so frames that do not overlap it are dropped. On a 151-frame Rosette mosaic that lost 58 frames, and `framing = max` left visible rectangles of different depth.

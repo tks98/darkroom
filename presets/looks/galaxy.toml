@@ -11,6 +11,8 @@ asinh = 25                           # asinh -human stretch factor
 shadows = -2.5                       # autostretch shadows clipping (sigma)
 target_bg = 0.10                     # autostretch target background
 sat = 0.35                           # Siril satu amount
+# method = "ghs"                     # a variant worth trying on a bright core (docs/configuration.md)
+# balance = "0.92,0.90,1.18"         # cosmetic tint tried with ghs on M31 (1,1,1 = off)
 
 [finish]
 gamma = 1.6                          # >1 dims star halos more than cores

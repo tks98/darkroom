@@ -509,17 +509,72 @@ def deconv(work: Path, strength: float = 0.0, psf="auto", cpu: bool = False) -> 
     tools.check_outputs([work / DECONVOLVED], log.path)
 
 
-def stretch(work: Path, asinh=25.0, shadows=-2.5, target_bg=0.10, sat=0.35, src: str = DENOISED) -> None:
+def sky_level(path: Path, balance=(1.0, 1.0, 1.0)) -> float:
+    """The sky level of a linear image, for [stretch] ghs_sp = "auto": the median, over the
+    pixels with data (not 0 in every channel), of the per-pixel mean of R, G and B after
+    multiplying them by ``balance`` (as the stretch script's ccm line does)."""
+    import numpy as np
+    from astropy.io import fits
+
+    from .mosaic import valid_mask
+    with fits.open(path) as hdul:
+        data = hdul[0].data
+    if data is None:
+        raise tools.StageError(f"{path}: no image data")
+    if data.dtype.kind in "ui":
+        data = data.astype(np.float32) / 65535.0     # Siril's 16-bit scale
+    data = np.asarray(data, dtype=np.float32)
+    if data.ndim == 2:
+        data = data[None]
+    if data.ndim != 3 or data.shape[0] not in (1, 3):
+        raise tools.StageError(f"{path}: expected a 1- or 3-channel image, got shape {data.shape}")
+    valid = valid_mask(data, max_hole=0)
+    if not valid.any():
+        raise tools.StageError(f"{path}: every pixel is 0; cannot measure the sky level for ghs_sp = \"auto\"")
+    b = np.asarray(balance if data.shape[0] == 3 else balance[:1], dtype=np.float32)[:, None]
+    mean = (data[:, valid] * b).mean(axis=0)
+    return float(np.median(mean[np.isfinite(mean)]))
+
+
+def stretch(work: Path, asinh=25.0, shadows=-2.5, target_bg=0.10, sat=0.35, src: str = DENOISED,
+            method: str = "asinh", ghs_d=4.0, ghs_b=12.0, ghs_hp=0.9, ghs_sp="auto",
+            balance="1,1,1") -> None:
+    from .config import parse_balance
     work = _abs(work)
     what = ("deconvolved image (run `darkroom deconv` first)" if src == DECONVOLVED
             else "denoised image (run `darkroom denoise` first)")
     tools.require_file(work / src, what)
-    script = siril.render_file("stretch.ssf", work, {
-        "WORK": str(work), "ASINH": siril.fmt_num(asinh), "SHADOWS": siril.fmt_num(shadows),
-        "TARGET_BG": siril.fmt_num(target_bg), "SAT": siril.fmt_num(sat), "INPUT": src,
-    })
+    if method not in ("asinh", "ghs"):
+        raise tools.StageError(f'[stretch] method should be "asinh" or "ghs", got {method!r}')
+    try:
+        bal = parse_balance(balance)
+    except ValueError as e:
+        raise tools.StageError(f"[stretch] {e}") from None
+    values = {"WORK": str(work), "ASINH": siril.fmt_num(asinh), "SHADOWS": siril.fmt_num(shadows),
+              "TARGET_BG": siril.fmt_num(target_bg), "SAT": siril.fmt_num(sat), "INPUT": src}
+    if bal != (1.0, 1.0, 1.0):
+        r, g, b = (siril.fmt_num(v) for v in bal)
+        values["BALANCE"] = f"{r} 0 0 0 {g} 0 0 0 {b}"
+    note = None
+    if method == "ghs":
+        if ghs_sp == "auto":
+            sp = sky_level(work / src, bal)
+            if not 0 <= sp <= ghs_hp:
+                raise tools.StageError(f"the sky level of {src} is {sp:.4g}, outside 0 to [stretch] ghs_hp "
+                                       f"({ghs_hp:g}); set [stretch] ghs_sp to a number")
+            note = f"[darkroom] ghs SP = {siril.fmt_num(sp)} (auto: sky median of {src})"
+        else:
+            sp = float(ghs_sp)
+            note = f"[darkroom] ghs SP = {siril.fmt_num(sp)} (set)"
+        print(note, flush=True)
+        values |= {"GHS": "1", "GHS_D": siril.fmt_num(ghs_d), "GHS_B": siril.fmt_num(ghs_b),
+                   "GHS_SP": siril.fmt_num(sp), "GHS_HP": siril.fmt_num(ghs_hp)}
+    script = siril.render_file("stretch.ssf", work, values)
     log = tools.logs_dir(work) / "stretch.log"
     siril.run_script(script, log)
+    if note:
+        with open(log, "a") as f:            # run_script starts the log afresh
+            f.write(note + "\n")
     tools.check_outputs([work / STRETCHED_FIT, work / STRETCHED_TIF], log)
 
 
@@ -613,7 +668,8 @@ def finish_params(f: dict) -> FinishParams:
                         crop=value if kind == "box" else None,
                         crop_aspect=value if kind == "aspect" else None,
                         crop_center=center if kind == "aspect" else None,
-                        crop_scale=float(f.get("crop_scale", 1.0)), stars=f.get("stars", "reduce"))
+                        crop_scale=float(f.get("crop_scale", 1.0)), stars=f.get("stars", "reduce"),
+                        blue_shift=float(f.get("blue_shift", 0.0)), core_white=float(f.get("core_white", 0.0)))
 
 
 def starnet_needed(finish_table: dict) -> bool:
@@ -657,6 +713,18 @@ def result_params(stage: str, table: dict) -> dict:
         out[k] = float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) and k != "erode" else v
     if stage == "color" and str(table.get("narrowband", "none")) != "none":
         out["narrowband"] = table["narrowband"]
+    if stage == "stretch":
+        # recorded only when in use, so work dirs made before these keys existed stay up to date
+        if table.get("method", "asinh") != "asinh":
+            out["method"] = table["method"]
+            out.pop("asinh")                     # not used by a ghs stretch
+            out |= {k: float(table[k]) for k in ("ghs_d", "ghs_b", "ghs_hp")}
+            sp = table.get("ghs_sp", "auto")
+            out["ghs_sp"] = sp if sp == "auto" else float(sp)
+        from .config import parse_balance
+        bal = parse_balance(table.get("balance", "1,1,1"))
+        if bal != (1.0, 1.0, 1.0):
+            out["balance"] = list(bal)
     if stage == "finish":
         aspect = parse_crop_spec(out["crop"])[0] == "aspect"
         if not aspect:
@@ -666,6 +734,9 @@ def result_params(stage: str, table: dict) -> dict:
             out["stars"] = table["stars"]
         if float(table.get("core", 0.0)) != 0.0:
             out["core"] = float(table["core"])   # finals made before core existed had none: rerun them
+        for k in ("blue_shift", "core_white"):
+            if float(table.get(k, 0.0)) != 0.0:
+                out[k] = float(table[k])
         if aspect and float(table.get("crop_scale", 1.0)) != 1.0:
             out["crop_scale"] = float(table["crop_scale"])
     return out

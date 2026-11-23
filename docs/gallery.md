@@ -6,7 +6,22 @@ Targets processed with darkroom, with the settings that differ from the defaults
 
 ![M31, the Andromeda Galaxy, with M32 below the core and M110 at upper right, running diagonally across a dense star field.](images/m31_final.jpg)
 
-ZWO Seestar S30 Pro at gain 200: two nights, 734 subs of 30 s, 6 h 7 min in total (see [two nights](#two-nights) below). Galaxy look, `crop = "2:3"`, and the optional deconvolution stage at `strength = 0.5` with the PSF measured from the image (2.5 px).
+ZWO Seestar S30 Pro at gain 200: two nights, 734 subs of 30 s, 6 h 7 min in total (see [two nights](#two-nights) below). Galaxy look, `crop = "2:3"`, and the optional deconvolution stage at `strength = 0.5` with the PSF measured from the image (2.5 px), plus these changes from the look's defaults:
+
+```toml
+[stretch]
+method = "ghs"                 # keeps the core from blowing out to white
+balance = "0.92,0.90,1.18"     # cooler tint before the stretch
+
+[finish]
+black = 0.06                   # darker sky (about 19/255 instead of 31)
+sharpen = 0.8
+sharpen_radius = 25            # local contrast: clears the hazy look
+blue_shift = 1                 # purple disk -> blue
+core_white = 0.75              # yellow core -> cream-white
+```
+
+The balance, `blue_shift` and `core_white` are cosmetic: they were chosen to look like the popular processed versions of M31, not measured. With the galaxy look's defaults the core is yellow and the disk purple-grey; see [configuration](configuration.md#colour-and-sharpening).
 
 ![Three pairs of 1:1 crops from M31. Left of each pair, "before": the core is a bright white disc and the dust lanes are soft. Right, "core 0.3 + deconv 0.5": the core fades smoothly with no white disc, and the dust lanes and stars are slightly crisper. The bottom pair shows M110, whose core is also less washed out.](images/m31_core_deconv.jpg)
 

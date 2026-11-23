@@ -256,6 +256,29 @@ def _stretch_args(o):
           help="autostretch shadows clipping (sigma)")
     o.add("--target-bg", type=float, default=0.10, key=("stretch", "target_bg"), help="autostretch target background")
     o.add("--sat", type=float, default=0.35, key=("stretch", "sat"), help="Siril satu amount")
+    o.add("--method", choices=config.STRETCH_METHODS, default="asinh", key=("stretch", "method"),
+          help="first stretch: asinh (asinh -human) or ghs (Siril's generalised hyperbolic stretch, ght)")
+    o.add("--ghs-d", type=float, default=4.0, metavar="D", key=("stretch", "ghs_d"),
+          help="ghs stretch strength, 0..10")
+    o.add("--ghs-b", type=float, default=12.0, metavar="B", key=("stretch", "ghs_b"),
+          help="ghs local intensity, -5..15 (higher concentrates the stretch near SP)")
+    o.add("--ghs-hp", type=float, default=0.9, metavar="HP", key=("stretch", "ghs_hp"),
+          help="ghs highlight protection point, 0..1")
+    o.add("--ghs-sp", type=_auto_num, default="auto", metavar="SP", key=("stretch", "ghs_sp"),
+          help='ghs symmetry point, 0..1, or "auto" for the sky level of the linear input')
+    o.add("--balance", default="1,1,1", metavar="R,G,B", key=("stretch", "balance"),
+          help="R,G,B multipliers on the linear image before the stretch (cosmetic white balance; "
+               "each 0.5..2; 1,1,1 = off)")
+
+
+def _auto_num(s: str):
+    """--ghs-sp value: "auto" or a number (range-checked with the settings)."""
+    if s.strip().lower() == "auto":
+        return "auto"
+    try:
+        return float(s)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f'expected a number or "auto", got {s!r}') from None
 
 
 def _starnet_args(o):
@@ -283,6 +306,10 @@ def _finish_args(o):
           help="unsharp-mask gaussian sigma (px)")
     o.add("--black", type=float, default=d.black, key=("finish", "black"), help="black point lift on starless")
     o.add("--erode", type=int, default=d.erode, key=("finish", "erode"), help="3x3 erosion passes on the star layer")
+    o.add("--blue-shift", type=float, default=d.blue_shift, key=("finish", "blue_shift"),
+          help="turn purple hues toward blue, 0 (off) to 1 (cosmetic)")
+    o.add("--core-white", type=float, default=d.core_white, key=("finish", "core_white"),
+          help="take colour out of the brightest part of the image, 0 (off) to 1 (cosmetic)")
     o.add("--no-neutral", dest="neutral", action="store_false", key=("finish", "neutral"),
           help="skip sky neutralization (on by default)")
     _crop_arg(o)
@@ -308,7 +335,7 @@ def _finish_params(a) -> FinishParams:
     crop = a.crop
     return FinishParams(gamma=a.gamma, star_strength=a.star_strength, mid=a.mid, sat=a.sat, yb=a.yb, core=a.core,
                         sharpen=a.sharpen, sharpen_radius=a.sharpen_radius, black=a.black,
-                        erode=a.erode, neutral=a.neutral,
+                        erode=a.erode, neutral=a.neutral, blue_shift=a.blue_shift, core_white=a.core_white,
                         crop=None if isinstance(crop, Aspect) else crop,
                         crop_aspect=tuple(crop) if isinstance(crop, Aspect) else None,
                         crop_center=parse_center(a.crop_center) if getattr(a, "crop_center", None) else None,
@@ -368,7 +395,7 @@ def build_parser() -> argparse.ArgumentParser:
                 "strength > 0): denoised.fits -> deconvolved.fits")
     _work(o); _deconv_args(o)
 
-    p, o = _sub(sp, "stretch", "Siril asinh + autostretch + saturation: denoised.fits (deconvolved.fits when "
+    p, o = _sub(sp, "stretch", "Siril asinh (or GHS) + autostretch + saturation: denoised.fits (deconvolved.fits when "
                 "[deconv] is on) -> stretched.fit, stretched.tif")
     _work(o); _stretch_args(o)
 
@@ -591,7 +618,8 @@ def _call(stage: str, work: Path, s: config.Settings, table: dict | None = None,
     elif stage == "stretch":
         t = s["stretch"]
         stages.stretch(work, t["asinh"], t["shadows"], t["target_bg"], t["sat"],
-                       src=stages.stretch_source(s["deconv"]))
+                       src=stages.stretch_source(s["deconv"]), method=t["method"], ghs_d=t["ghs_d"],
+                       ghs_b=t["ghs_b"], ghs_hp=t["ghs_hp"], ghs_sp=t["ghs_sp"], balance=t["balance"])
     elif stage == "starnet":
         stages.starnet(work, _starnet_dir(s))
     elif stage == "finish":
